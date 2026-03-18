@@ -1,6 +1,7 @@
 # renfe-skill
 
-<img width="512" alt="image" src="https://github.com/user-attachments/assets/751f4631-33e8-4f84-bf79-eceaaac36e03" />
+<img width="49%" alt="image" src="https://github.com/user-attachments/assets/751f4631-33e8-4f84-bf79-eceaaac36e03" />
+<img width="49%" alt="image" src="https://github.com/user-attachments/assets/42943380-5541-4be0-bdba-bce9493ae629" />
 
 Query RENFE Cercanías and Rodalies train schedules and realtime alerts via GTFS.
 
