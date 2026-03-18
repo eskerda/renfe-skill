@@ -48,7 +48,7 @@ Madrid, Barcelona, Rodalies Catalunya, Málaga, Sevilla, Valencia, Bilbao, Santa
 
 ## Agent skill
 
-This can be used as an [Agent Skill](https://agentskills.io/). It works with [pi](https://pi.dev) and should also work with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+This can be used as an agent skill. It works with [pi](https://pi.dev) and should also work with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 ```bash
 # pi
