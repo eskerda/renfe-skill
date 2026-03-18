@@ -1,0 +1,13 @@
+[project]
+name = "renfe-skill"
+version = "0.1.0"
+description = "RENFE Cercanías schedule and alerts via GTFS"
+requires-python = ">=3.11"
+dependencies = [
+    "gtfs-realtime-bindings>=1.0.0",
+    "protobuf>=4.0.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+renfe = "renfe_skill.cli:main"
