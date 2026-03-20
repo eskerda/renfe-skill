@@ -4,8 +4,55 @@ import argparse
 import sys
 from datetime import datetime
 
-from .gtfs_static import download_gtfs, find_routes, load_stops, search_schedule
-from .gtfs_rt import get_alerts, get_trip_updates
+from .gtfs_static import download_gtfs, find_routes, find_trips, get_active_services, load_stops, search_schedule
+from .gtfs_rt import get_alerts, get_trip_updates, get_vehicle_positions
+
+
+def _get_train_numbers(zip_path, routes, services) -> set[str]:
+    """Extract train numbers for a line from GTFS static trips.
+
+    Maps trip_ids like '5173X15778R11' to train numbers like '15778'.
+    """
+    route_ids = {r["route_id"] for r in routes}
+    trips = find_trips(zip_path, route_ids, services)
+    train_numbers = set()
+    for t in trips:
+        tid = t["trip_id"]
+        for r in routes:
+            short = r["route_short_name"]
+            if short in tid:
+                num = tid.split(short)[0]
+                for s in services:
+                    if num.startswith(s):
+                        num = num[len(s):]
+                        break
+                if num:
+                    train_numbers.add(num)
+    return train_numbers
+
+
+def _match_rt_entities(entities: list[dict], line: str, train_numbers: set[str]) -> list[dict]:
+    """Filter RT entities by line name in trip_id (cercanías) or train number prefix (LD)."""
+    line_upper = line.upper()
+    results = []
+    for e in entities:
+        tid = e["trip_id"]
+        if line_upper in tid.upper():
+            results.append(e)
+        elif any(tid.startswith(num) for num in train_numbers):
+            results.append(e)
+    return results
+
+
+def _train_label(trip_id: str, train_numbers: set[str]) -> str:
+    """Extract a human-readable train number from a trip_id."""
+    for num in sorted(train_numbers, key=len, reverse=True):
+        if num in trip_id:
+            return num
+    for num in sorted(train_numbers, key=len, reverse=True):
+        if trip_id.startswith(num):
+            return num
+    return trip_id
 
 
 def cmd_schedule(args):
@@ -84,16 +131,11 @@ def cmd_delays(args):
         print(f"No routes found for line {args.line}")
         return
 
-    route_ids = {r["route_id"] for r in routes}
+    today = datetime.now().strftime("%Y%m%d")
+    services = get_active_services(zip_path, today)
+    train_numbers = _get_train_numbers(zip_path, routes, services)
 
-    # Get all trip updates and filter by route prefix
-    # Trip IDs contain the route info, e.g. "5101M15770R11"
-    updates = get_trip_updates()
-
-    # Filter: trip_id ends with the line name pattern
-    line_upper = args.line.upper()
-    relevant = [u for u in updates if line_upper in u["trip_id"].upper()]
-
+    relevant = _match_rt_entities(get_trip_updates(), args.line, train_numbers)
     stops = load_stops(zip_path)
 
     if not relevant:
@@ -103,16 +145,49 @@ def cmd_delays(args):
     print(f"Current delays for line {args.line}:")
     print()
     for u in relevant:
+        label = _train_label(u["trip_id"], train_numbers)
         delay_min = u["delay_seconds"] / 60
         sign = "+" if u["delay_seconds"] > 0 else ""
-        print(f"  Trip {u['trip_id']}: {sign}{delay_min:.0f} min")
+        print(f"  Train {label}: {sign}{delay_min:.0f} min")
         for su in u["stop_updates"]:
             stop_name = stops.get(su["stop_id"], {}).get("stop_name", su["stop_id"])
             if su["arrival_delay"]:
                 d = su["arrival_delay"] / 60
                 print(f"    → {stop_name}: {'+' if d > 0 else ''}{d:.0f} min")
     print()
-    print(f"{len(relevant)} trip(s) with updates.")
+    print(f"{len(relevant)} train(s) with updates.")
+
+
+def cmd_positions(args):
+    """Show current vehicle positions for a line."""
+    zip_path = download_gtfs(force=args.refresh)
+
+    routes = find_routes(zip_path, line=args.line)
+    if not routes:
+        print(f"No routes found for line {args.line}")
+        return
+
+    today = datetime.now().strftime("%Y%m%d")
+    services = get_active_services(zip_path, today)
+    train_numbers = _get_train_numbers(zip_path, routes, services)
+
+    relevant = _match_rt_entities(get_vehicle_positions(), args.line, train_numbers)
+    stops = load_stops(zip_path)
+
+    if not relevant:
+        print(f"No active trains for line {args.line}")
+        return
+
+    print(f"Active trains on line {args.line}:")
+    print()
+    print(f"{'Train':>8}  {'Status':<14}  {'Stop':<30}  {'Lat':>9}  {'Lon':>9}")
+    print(f"{'─' * 8}  {'─' * 14}  {'─' * 30}  {'─' * 9}  {'─' * 9}")
+    for v in relevant:
+        label = _train_label(v["trip_id"], train_numbers)
+        stop_name = stops.get(v["stop_id"], {}).get("stop_name", v["stop_id"])
+        print(f"{label:>8}  {v['status']:<14}  {stop_name:<30}  {v['latitude']:>9.5f}  {v['longitude']:>9.5f}")
+    print()
+    print(f"{len(relevant)} train(s) active.")
 
 
 def cmd_stops(args):
@@ -129,7 +204,7 @@ def cmd_stops(args):
         print(f"  {r['route_id']}: {r['route_long_name']} ({r['nucleus']})")
 
     # Get one trip per route direction to show stops
-    from .gtfs_static import find_trips, find_stop_times
+    from .gtfs_static import find_stop_times
     route_ids = {r["route_id"] for r in routes}
 
     # Just grab first available trip per route
@@ -207,6 +282,11 @@ def main():
     p_delays = sub.add_parser("delays", aliases=["d"], help="Current delays for a line")
     p_delays.add_argument("--line", "-l", required=True, help="Line name (e.g. R11)")
     p_delays.set_defaults(func=cmd_delays)
+
+    # positions
+    p_pos = sub.add_parser("positions", aliases=["p"], help="Live train positions")
+    p_pos.add_argument("--line", "-l", required=True, help="Line name (e.g. R11)")
+    p_pos.set_defaults(func=cmd_positions)
 
     # stops
     p_stops = sub.add_parser("stops", help="List stops on a line")
