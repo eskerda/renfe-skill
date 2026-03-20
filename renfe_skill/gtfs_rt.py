@@ -3,7 +3,13 @@
 import requests
 from google.transit import gtfs_realtime_pb2
 
-from .config import GTFS_RT_ALERTS, GTFS_RT_TRIP_UPDATES, GTFS_RT_VEHICLE_POSITIONS
+from .config import (
+    GTFS_RT_ALERTS,
+    GTFS_RT_TRIP_UPDATES,
+    GTFS_RT_TRIP_UPDATES_LD,
+    GTFS_RT_VEHICLE_POSITIONS,
+    GTFS_RT_VEHICLE_POSITIONS_LD,
+)
 
 
 def _fetch_feed(url: str) -> gtfs_realtime_pb2.FeedMessage:
@@ -12,6 +18,14 @@ def _fetch_feed(url: str) -> gtfs_realtime_pb2.FeedMessage:
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.ParseFromString(resp.content)
     return feed
+
+
+def _fetch_feed_safe(url: str) -> gtfs_realtime_pb2.FeedMessage | None:
+    """Fetch a feed, returning None on error (e.g. 404)."""
+    try:
+        return _fetch_feed(url)
+    except requests.HTTPError:
+        return None
 
 
 def get_alerts(route_ids: set[str] | None = None) -> list[dict]:
@@ -56,9 +70,8 @@ def get_alerts(route_ids: set[str] | None = None) -> list[dict]:
     return results
 
 
-def get_trip_updates(trip_ids: set[str] | None = None) -> list[dict]:
-    """Fetch trip updates (delays), optionally filtered to specific trip_ids."""
-    feed = _fetch_feed(GTFS_RT_TRIP_UPDATES)
+def _parse_trip_updates(feed: gtfs_realtime_pb2.FeedMessage, trip_ids: set[str] | None = None) -> list[dict]:
+    """Parse trip updates from a feed message."""
     results = []
     for entity in feed.entity:
         tu = entity.trip_update
@@ -83,9 +96,24 @@ def get_trip_updates(trip_ids: set[str] | None = None) -> list[dict]:
     return results
 
 
-def get_vehicle_positions(trip_ids: set[str] | None = None) -> list[dict]:
-    """Fetch vehicle positions, optionally filtered to specific trip_ids."""
-    feed = _fetch_feed(GTFS_RT_VEHICLE_POSITIONS)
+def get_trip_updates(trip_ids: set[str] | None = None, include_ld: bool = True) -> list[dict]:
+    """Fetch trip updates (delays), optionally filtered to specific trip_ids.
+
+    Args:
+        trip_ids: Only return updates for these trip_ids.
+        include_ld: Also fetch from the LD (long distance) feed.
+    """
+    results = _parse_trip_updates(_fetch_feed(GTFS_RT_TRIP_UPDATES), trip_ids)
+    if include_ld:
+        ld_feed = _fetch_feed_safe(GTFS_RT_TRIP_UPDATES_LD)
+        if ld_feed:
+            results.extend(_parse_trip_updates(ld_feed, trip_ids))
+    return results
+
+
+def _parse_vehicle_positions(feed: gtfs_realtime_pb2.FeedMessage, trip_ids: set[str] | None = None) -> list[dict]:
+    """Parse vehicle positions from a feed message."""
+    status_map = {0: "INCOMING_AT", 1: "STOPPED_AT", 2: "IN_TRANSIT_TO"}
     results = []
     for entity in feed.entity:
         vp = entity.vehicle
@@ -93,8 +121,6 @@ def get_vehicle_positions(trip_ids: set[str] | None = None) -> list[dict]:
 
         if trip_ids and tid not in trip_ids:
             continue
-
-        status_map = {0: "INCOMING_AT", 1: "STOPPED_AT", 2: "IN_TRANSIT_TO"}
 
         results.append({
             "trip_id": tid,
@@ -106,4 +132,19 @@ def get_vehicle_positions(trip_ids: set[str] | None = None) -> list[dict]:
             "status": status_map.get(vp.current_status, str(vp.current_status)),
             "timestamp": vp.timestamp,
         })
+    return results
+
+
+def get_vehicle_positions(trip_ids: set[str] | None = None, include_ld: bool = True) -> list[dict]:
+    """Fetch vehicle positions, optionally filtered to specific trip_ids.
+
+    Args:
+        trip_ids: Only return positions for these trip_ids.
+        include_ld: Also fetch from the LD (long distance) feed.
+    """
+    results = _parse_vehicle_positions(_fetch_feed(GTFS_RT_VEHICLE_POSITIONS), trip_ids)
+    if include_ld:
+        ld_feed = _fetch_feed_safe(GTFS_RT_VEHICLE_POSITIONS_LD)
+        if ld_feed:
+            results.extend(_parse_vehicle_positions(ld_feed, trip_ids))
     return results

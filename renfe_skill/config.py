@@ -5,6 +5,10 @@ GTFS_RT_VEHICLE_POSITIONS = "https://gtfsrt.renfe.com/vehicle_positions.pb"
 GTFS_RT_TRIP_UPDATES = "https://gtfsrt.renfe.com/trip_updates.pb"
 GTFS_RT_ALERTS = "https://gtfsrt.renfe.com/alerts.pb"
 
+# Long distance / Media Distancia feeds (no alerts feed available)
+GTFS_RT_VEHICLE_POSITIONS_LD = "https://gtfsrt.renfe.com/vehicle_positions_LD.pb"
+GTFS_RT_TRIP_UPDATES_LD = "https://gtfsrt.renfe.com/trip_updates_LD.pb"
+
 # Cercanías network prefix -> city/region name
 NUCLEUS_NAMES = {
     "10": "Madrid",
