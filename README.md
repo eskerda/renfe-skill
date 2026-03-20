@@ -18,10 +18,19 @@ uv venv && uv pip install -e .
 ## Usage
 
 ```bash
-# Search schedule
+# Search schedule (line auto-detected if omitted)
+renfe schedule --from "Sants" --to "Sitges"
 renfe schedule --line R11 --from "Girona" --to "Sants"
-renfe schedule --line R11 --from "Sants" --to "Figueres" --after 18:00
-renfe schedule --line R11 --from "Girona" --to "Sants" --date 20260320
+renfe schedule --from "Sants" --to "Figueres" --after 18:00
+
+# Station departures board
+renfe departures --stop "Sants"
+renfe dep --stop "Sants" --line R11
+renfe dep --stop "Sants" --after 09:30
+
+# Station arrivals board
+renfe arrivals --stop "Sants"
+renfe arr --stop "Sants" --line R11
 
 # Service alerts
 renfe alerts --line R11
@@ -29,17 +38,26 @@ renfe alerts --line R11
 # Current delays
 renfe delays --line R11
 
+# Live train positions
+renfe positions --line R11
+
 # List stops on a line
 renfe stops --line R11
 
 # List available lines
 renfe routes
 renfe routes --nucleus Barcelona
+
+# Skip realtime lookups (faster, no Delay column)
+renfe --no-rt dep --stop "Sants"
+renfe --no-rt schedule --from "Sants" --to "Girona"
 ```
+
+Stop names are partial and accent-insensitive: "Gracia" matches "Gràcia", "Macanet" matches "Maçanet".
 
 ## Data sources
 
-- **Schedule**: [GTFS static feed](https://ssl.renfe.com/ftransit/Fichero_CER_FOMENTO/fomento_transit.zip) — cached locally for 1 week
+- **Schedule**: [GTFS static feed](https://ssl.renfe.com/ftransit/Fichero_CER_FOMENTO/fomento_transit.zip) — cached as SQLite, refreshed weekly
 - **Realtime**: [GTFS-RT](https://gtfsrt.renfe.com/) — vehicle positions, trip updates, service alerts
 
 ## Supported networks
