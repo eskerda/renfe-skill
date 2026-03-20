@@ -23,13 +23,6 @@ class AmbiguousStopError(Exception):
         super().__init__(f"Multiple stops match '{query}': {', '.join(matches)}")
 
 
-def _check_ambiguous(stop_rows: list, query: str) -> None:
-    """Raise AmbiguousStopError if multiple distinct stop names match."""
-    names = sorted({r["stop_name"] for r in stop_rows})
-    if len(names) > 1:
-        raise AmbiguousStopError(query, names)
-
-
 def _normalize(text: str) -> str:
     """Normalize text for accent-insensitive, case-insensitive matching."""
     text = unicodedata.normalize("NFD", text)
@@ -318,9 +311,6 @@ def search_schedule(
         conn.close()
         return []
 
-    _check_ambiguous(origin_stops, origin)
-    _check_ambiguous(dest_stops, destination)
-
     origin_ids = {r["stop_id"] for r in origin_stops}
     dest_ids = {r["stop_id"] for r in dest_stops}
     origin_names = {r["stop_id"]: r["stop_name"] for r in origin_stops}
@@ -438,6 +428,15 @@ def search_schedule(
 
     conn.close()
 
+    # Check for ambiguous stops in actual results
+    if results:
+        result_origins = sorted({r["origin_stop"] for r in results})
+        if len(result_origins) > 1:
+            raise AmbiguousStopError(origin, result_origins)
+        result_dests = sorted({r["destination_stop"] for r in results})
+        if len(result_dests) > 1:
+            raise AmbiguousStopError(destination, result_dests)
+
     # Classify train types — per line
     if results:
         from .train_type import classify
@@ -480,8 +479,6 @@ def _search_stop_board(
     if not stop_rows:
         conn.close()
         return []
-
-    _check_ambiguous(stop_rows, stop)
 
     stop_ids = {r["stop_id"] for r in stop_rows}
     stop_name = stop_rows[0]["stop_name"]
@@ -539,7 +536,7 @@ def _search_stop_board(
 
         # Get time at this stop, excluding terminal stops
         rows = conn.execute(
-            f"""SELECT st.trip_id, st.{time_col}, st.stop_sequence
+            f"""SELECT st.trip_id, st.{time_col}, st.stop_sequence, st.stop_id
                 FROM stop_times st
                 WHERE st.trip_id IN ({trip_ph}) AND st.stop_id IN ({stop_ph})
                 AND st.stop_sequence {seq_filter} (
@@ -581,11 +578,12 @@ def _search_stop_board(
             if before_time and t[:5] > before_time:
                 continue
 
+            stop_names = {sr["stop_id"]: sr["stop_name"] for sr in stop_rows}
             entry = {
                 "trip_id": tid,
                 "line": trip_to_line[tid],
                 "time": t,
-                "stop_name": stop_name,
+                "stop_name": stop_names.get(r["stop_id"], stop_name),
             }
             if mode == "departures":
                 entry["destination"] = end_by_trip.get(tid, "?")
@@ -595,6 +593,13 @@ def _search_stop_board(
             results.append(entry)
 
     conn.close()
+
+    # Check for ambiguous stops in actual results
+    if results:
+        result_stops = sorted({r["stop_name"] for r in results})
+        if len(result_stops) > 1:
+            raise AmbiguousStopError(stop, result_stops)
+
     results.sort(key=lambda r: r["time"])
     return results
 
