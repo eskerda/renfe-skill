@@ -114,12 +114,18 @@ def cmd_schedule(args):
         print(f"(showing departures after {after_time})")
     print()
 
+    rt = not args.no_rt
     if multi_line:
-        print(f"{'Train':>7}  {'Line':>4}  {'Departure':>10}  {'Arrival':>8}  {'Type':>4}  {'Delay':>7}")
-        print(f"{'─' * 7}  {'─' * 4}  {'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 7}")
+        hdr = f"{'Train':>7}  {'Line':>4}  {'Departure':>10}  {'Arrival':>8}  {'Type':>4}"
+        sep = f"{'─' * 7}  {'─' * 4}  {'─' * 10}  {'─' * 8}  {'─' * 4}"
     else:
-        print(f"{'Train':>7}  {'Departure':>10}  {'Arrival':>8}  {'Type':>4}  {'Delay':>7}")
-        print(f"{'─' * 7}  {'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 7}")
+        hdr = f"{'Train':>7}  {'Departure':>10}  {'Arrival':>8}  {'Type':>4}"
+        sep = f"{'─' * 7}  {'─' * 10}  {'─' * 8}  {'─' * 4}"
+    if rt:
+        hdr += f"  {'Delay':>7}"
+        sep += f"  {'─' * 7}"
+    print(hdr)
+    print(sep)
 
     for r in results:
         tt = r.get('train_type', '?')
@@ -128,18 +134,20 @@ def cmd_schedule(args):
         dep = r["departure_time"][:5]
         arr = r["arrival_time"][:5]
 
-        if delay_s and delay_s != 0:
+        delay_str = ""
+        if rt and delay_s and delay_s != 0:
             delay_min = delay_s / 60
             sign = "+" if delay_s > 0 else ""
             delay_str = f"{sign}{delay_min:.0f}m"
             dep = f"*{dep}"
-        else:
-            delay_str = ""
 
         if multi_line:
-            print(f"{label:>7}  {r['line']:>4}  {dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}")
+            row = f"{label:>7}  {r['line']:>4}  {dep:>10}  {arr:>8}  {tt:>4}"
         else:
-            print(f"{label:>7}  {dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}")
+            row = f"{label:>7}  {dep:>10}  {arr:>8}  {tt:>4}"
+        if rt:
+            row += f"  {delay_str:>7}"
+        print(row)
 
     print(f"\n{len(results)} trips found.")
 
@@ -172,23 +180,34 @@ def cmd_departures(args):
     if after_time:
         print(f"(showing departures after {after_time})")
     print()
-    print(f"{'Train':>7}  {'Line':>4}  {'Departure':>10}  {'Delay':>7}  Destination")
-    print(f"{'─' * 7}  {'─' * 4}  {'─' * 10}  {'─' * 7}  {'─' * 30}")
+    rt = not args.no_rt
+    hdr = f"{'Train':>7}  {'Line':>4}  {'Departure':>10}"
+    sep = f"{'─' * 7}  {'─' * 4}  {'─' * 10}"
+    if rt:
+        hdr += f"  {'Delay':>7}"
+        sep += f"  {'─' * 7}"
+    hdr += "  Destination"
+    sep += f"  {'─' * 30}"
+    print(hdr)
+    print(sep)
 
     for r in results:
         label = _train_label(r["trip_id"], all_train_numbers)
         delay_s = delay_by_train.get(label)
         dep = r["time"][:5]
 
-        if delay_s and delay_s != 0:
+        delay_str = ""
+        if rt and delay_s and delay_s != 0:
             delay_min = delay_s / 60
             sign = "+" if delay_s > 0 else ""
             delay_str = f"{sign}{delay_min:.0f}m"
             dep = f"*{dep}"
-        else:
-            delay_str = ""
 
-        print(f"{label:>7}  {r['line']:>4}  {dep:>10}  {delay_str:>7}  {r['destination']}")
+        row = f"{label:>7}  {r['line']:>4}  {dep:>10}"
+        if rt:
+            row += f"  {delay_str:>7}"
+        row += f"  {r['destination']}"
+        print(row)
 
     print(f"\n{len(results)} departures.")
 
@@ -221,23 +240,34 @@ def cmd_arrivals(args):
     if after_time:
         print(f"(showing arrivals after {after_time})")
     print()
-    print(f"{'Train':>7}  {'Line':>4}  {'Arrival':>10}  {'Delay':>7}  Origin")
-    print(f"{'─' * 7}  {'─' * 4}  {'─' * 10}  {'─' * 7}  {'─' * 30}")
+    rt = not args.no_rt
+    hdr = f"{'Train':>7}  {'Line':>4}  {'Arrival':>10}"
+    sep = f"{'─' * 7}  {'─' * 4}  {'─' * 10}"
+    if rt:
+        hdr += f"  {'Delay':>7}"
+        sep += f"  {'─' * 7}"
+    hdr += "  Origin"
+    sep += f"  {'─' * 30}"
+    print(hdr)
+    print(sep)
 
     for r in results:
         label = _train_label(r["trip_id"], all_train_numbers)
         delay_s = delay_by_train.get(label)
         arr = r["time"][:5]
 
-        if delay_s and delay_s != 0:
+        delay_str = ""
+        if rt and delay_s and delay_s != 0:
             delay_min = delay_s / 60
             sign = "+" if delay_s > 0 else ""
             delay_str = f"{sign}{delay_min:.0f}m"
             arr = f"*{arr}"
-        else:
-            delay_str = ""
 
-        print(f"{label:>7}  {r['line']:>4}  {arr:>10}  {delay_str:>7}  {r['origin']}")
+        row = f"{label:>7}  {r['line']:>4}  {arr:>10}"
+        if rt:
+            row += f"  {delay_str:>7}"
+        row += f"  {r['origin']}"
+        print(row)
 
     print(f"\n{len(results)} arrivals.")
 
