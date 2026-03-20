@@ -1,8 +1,9 @@
-"""Download and query GTFS static schedule data."""
+"""Download and query GTFS static schedule data via SQLite cache."""
 
 import csv
 import io
 import os
+import sqlite3
 import time
 import unicodedata
 import zipfile
@@ -20,182 +21,255 @@ def _normalize(text: str) -> str:
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     return text.upper()
 
+
 CACHE_DIR = Path(os.environ.get("RENFE_CACHE_DIR", Path.home() / ".cache" / "renfe-skill"))
 CACHE_MAX_AGE = 3600 * 24 * 7  # 1 week
 
 
-def _cache_path() -> Path:
+def _zip_path() -> Path:
     return CACHE_DIR / "gtfs.zip"
 
 
-def _needs_refresh() -> bool:
-    p = _cache_path()
+def _db_path() -> Path:
+    return CACHE_DIR / "gtfs.db"
+
+
+def _needs_download() -> bool:
+    p = _zip_path()
     if not p.exists():
         return True
-    age = time.time() - p.stat().st_mtime
-    return age > CACHE_MAX_AGE
+    return (time.time() - p.stat().st_mtime) > CACHE_MAX_AGE
+
+
+def _needs_rebuild() -> bool:
+    db = _db_path()
+    zp = _zip_path()
+    if not db.exists():
+        return True
+    return db.stat().st_mtime < zp.stat().st_mtime
+
+
+def _build_db(zip_path: Path, db_path: Path) -> None:
+    """Build SQLite database from GTFS zip. ~10s one-time cost."""
+    import sys
+    print("Building schedule database...", end=" ", flush=True, file=sys.stderr)
+    start = time.time()
+
+    # Remove stale db if exists
+    if db_path.exists():
+        db_path.unlink()
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=OFF")
+
+    conn.executescript("""
+        CREATE TABLE stops (
+            stop_id TEXT PRIMARY KEY,
+            stop_name TEXT,
+            stop_name_norm TEXT,
+            stop_lat REAL,
+            stop_lon REAL
+        );
+        CREATE TABLE routes (
+            route_id TEXT PRIMARY KEY,
+            route_short_name TEXT,
+            route_long_name TEXT,
+            nucleus TEXT
+        );
+        CREATE TABLE calendar (
+            service_id TEXT PRIMARY KEY,
+            monday INTEGER, tuesday INTEGER, wednesday INTEGER,
+            thursday INTEGER, friday INTEGER, saturday INTEGER, sunday INTEGER,
+            start_date TEXT,
+            end_date TEXT
+        );
+        CREATE TABLE trips (
+            trip_id TEXT PRIMARY KEY,
+            route_id TEXT,
+            service_id TEXT
+        );
+        CREATE TABLE stop_times (
+            trip_id TEXT,
+            stop_id TEXT,
+            arrival_time TEXT,
+            departure_time TEXT,
+            stop_sequence INTEGER
+        );
+    """)
+
+    def _stripped_reader(zf, filename):
+        """CSV reader that strips both keys and values."""
+        with zf.open(filename) as f:
+            reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+            for row in reader:
+                yield {k.strip(): v.strip() for k, v in row.items()}
+
+    with zipfile.ZipFile(zip_path) as zf:
+        # stops
+        conn.executemany(
+            "INSERT INTO stops VALUES (?,?,?,?,?)",
+            ((r["stop_id"], r["stop_name"], _normalize(r["stop_name"]),
+              float(r["stop_lat"]), float(r["stop_lon"]))
+             for r in _stripped_reader(zf, "stops.txt"))
+        )
+
+        # routes
+        conn.executemany(
+            "INSERT INTO routes VALUES (?,?,?,?)",
+            ((r["route_id"], r["route_short_name"], r["route_long_name"],
+              NUCLEUS_NAMES.get(r["route_id"][:2], r["route_id"][:2]))
+             for r in _stripped_reader(zf, "routes.txt"))
+        )
+
+        # calendar
+        conn.executemany(
+            "INSERT INTO calendar VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ((r["service_id"],
+              int(r["monday"]), int(r["tuesday"]), int(r["wednesday"]),
+              int(r["thursday"]), int(r["friday"]), int(r["saturday"]),
+              int(r["sunday"]), r["start_date"], r["end_date"])
+             for r in _stripped_reader(zf, "calendar.txt"))
+        )
+
+        # trips
+        conn.executemany(
+            "INSERT INTO trips VALUES (?,?,?)",
+            ((r["trip_id"], r["route_id"], r["service_id"])
+             for r in _stripped_reader(zf, "trips.txt"))
+        )
+
+        # stop_times — the big one
+        conn.executemany(
+            "INSERT INTO stop_times VALUES (?,?,?,?,?)",
+            ((r["trip_id"], r["stop_id"], r["arrival_time"],
+              r["departure_time"], int(r["stop_sequence"]))
+             for r in _stripped_reader(zf, "stop_times.txt"))
+        )
+
+    # Indexes — built after bulk insert for speed
+    conn.executescript("""
+        CREATE INDEX idx_stop_times_stop_id ON stop_times(stop_id);
+        CREATE INDEX idx_stop_times_trip_id ON stop_times(trip_id);
+        CREATE INDEX idx_trips_route_id ON trips(route_id);
+        CREATE INDEX idx_trips_service_id ON trips(service_id);
+        CREATE INDEX idx_routes_short_name ON routes(route_short_name);
+    """)
+
+    conn.commit()
+    conn.close()
+
+    # Set db mtime to match zip mtime
+    zip_mtime = zip_path.stat().st_mtime
+    os.utime(db_path, (zip_mtime, zip_mtime))
+
+    elapsed = time.time() - start
+    print(f"done ({elapsed:.1f}s)", file=sys.stderr)
 
 
 def download_gtfs(force: bool = False) -> Path:
-    """Download GTFS zip if stale or missing. Returns path to zip."""
+    """Download GTFS zip if stale, build SQLite DB if needed. Returns path to DB."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    p = _cache_path()
-    if force or _needs_refresh():
+    zp = _zip_path()
+    if force or _needs_download():
         resp = requests.get(GTFS_STATIC_URL, timeout=120)
         resp.raise_for_status()
-        p.write_bytes(resp.content)
-    return p
+        zp.write_bytes(resp.content)
+
+    db = _db_path()
+    if force or _needs_rebuild():
+        _build_db(zp, db)
+
+    return db
 
 
-def _read_csv_stripped(zf: zipfile.ZipFile, filename: str):
-    """Yield dicts from a CSV inside the zip, stripping all keys and values."""
-    with zf.open(filename) as f:
-        text = io.TextIOWrapper(f, encoding="utf-8-sig")
-        header = text.readline()
-        cols = [c.strip() for c in header.split(",")]
-        for line in text:
-            vals = [v.strip() for v in line.split(",")]
-            yield dict(zip(cols, vals))
+def _connect(db_path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
-def load_routes(zip_path: Path) -> list[dict]:
-    with zipfile.ZipFile(zip_path) as zf:
-        routes = list(_read_csv_stripped(zf, "routes.txt"))
-    for r in routes:
-        prefix = r["route_id"][:2]
-        r["nucleus"] = NUCLEUS_NAMES.get(prefix, prefix)
-    return routes
+def load_routes(db_path: Path) -> list[dict]:
+    conn = _connect(db_path)
+    rows = conn.execute("SELECT * FROM routes").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
-def load_stops(zip_path: Path) -> dict[str, dict]:
-    with zipfile.ZipFile(zip_path) as zf:
-        return {r["stop_id"]: r for r in _read_csv_stripped(zf, "stops.txt")}
+def load_stops(db_path: Path) -> dict[str, dict]:
+    conn = _connect(db_path)
+    rows = conn.execute("SELECT stop_id, stop_name, stop_lat, stop_lon FROM stops").fetchall()
+    conn.close()
+    return {r["stop_id"]: dict(r) for r in rows}
 
 
-def find_routes(zip_path: Path, line: str | None = None, nucleus: str | None = None) -> list[dict]:
-    """Find routes matching a line name (e.g. 'R11') and/or nucleus (e.g. 'Barcelona' or '51')."""
-    routes = load_routes(zip_path)
-    results = []
-    for r in routes:
-        if line and r["route_short_name"].upper() != line.upper():
-            continue
-        if nucleus:
-            nuc_upper = nucleus.upper()
-            prefix = r["route_id"][:2]
-            if nuc_upper != prefix and nuc_upper not in r["nucleus"].upper():
-                continue
-        results.append(r)
-    return results
+def find_routes(db_path: Path, line: str | None = None, nucleus: str | None = None) -> list[dict]:
+    """Find routes matching a line name and/or nucleus."""
+    conn = _connect(db_path)
+    query = "SELECT * FROM routes WHERE 1=1"
+    params: list = []
+    if line:
+        query += " AND UPPER(route_short_name) = ?"
+        params.append(line.upper())
+    if nucleus:
+        nuc_upper = nucleus.upper()
+        query += " AND (route_id LIKE ? OR UPPER(nucleus) LIKE ?)"
+        params.extend([f"{nuc_upper}%", f"%{nuc_upper}%"])
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
-def get_active_services(zip_path: Path, date_str: str) -> set[str]:
+def get_active_services(db_path: Path, date_str: str) -> set[str]:
     """Get service_ids active on a given date (YYYYMMDD)."""
     dt = datetime.strptime(date_str, "%Y%m%d")
-    day_name = dt.strftime("%A").lower()
-
-    with zipfile.ZipFile(zip_path) as zf:
-        active = set()
-        for row in _read_csv_stripped(zf, "calendar.txt"):
-            start = row["start_date"]
-            end = row["end_date"]
-            if start <= date_str <= end and row.get(day_name, "0") == "1":
-                active.add(row["service_id"])
-    return active
+    day_col = dt.strftime("%A").lower()
+    conn = _connect(db_path)
+    rows = conn.execute(
+        f"SELECT service_id FROM calendar WHERE start_date <= ? AND end_date >= ? AND {day_col} = 1",
+        (date_str, date_str)
+    ).fetchall()
+    conn.close()
+    return {r["service_id"] for r in rows}
 
 
-def find_trips(zip_path: Path, route_ids: set[str], service_ids: set[str] | None = None) -> list[dict]:
-    """Find trips for given route_ids, optionally filtered by active service_ids."""
-    trips = []
-    with zipfile.ZipFile(zip_path) as zf:
-        for row in _read_csv_stripped(zf, "trips.txt"):
-            if row["route_id"] in route_ids:
-                if service_ids is None or row["service_id"] in service_ids:
-                    trips.append(row)
-    return trips
+def find_trips(db_path: Path, route_ids: set[str], service_ids: set[str] | None = None) -> list[dict]:
+    """Find trips for given route_ids, optionally filtered by service_ids."""
+    conn = _connect(db_path)
+    placeholders = ",".join("?" for _ in route_ids)
+    query = f"SELECT * FROM trips WHERE route_id IN ({placeholders})"
+    params = list(route_ids)
+    if service_ids:
+        svc_ph = ",".join("?" for _ in service_ids)
+        query += f" AND service_id IN ({svc_ph})"
+        params.extend(service_ids)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
-def find_stop_times(zip_path: Path, trip_ids: set[str]) -> dict[str, list[dict]]:
-    """Load stop_times grouped by trip_id for the given trips."""
+def find_stop_times(db_path: Path, trip_ids: set[str]) -> dict[str, list[dict]]:
+    """Load stop_times grouped by trip_id."""
+    conn = _connect(db_path)
+    # Process in chunks to avoid SQLite variable limit
     by_trip: dict[str, list[dict]] = {}
-    with zipfile.ZipFile(zip_path) as zf:
-        for row in _read_csv_stripped(zf, "stop_times.txt"):
-            if row["trip_id"] in trip_ids:
-                by_trip.setdefault(row["trip_id"], []).append(row)
-    # Sort each trip's stops by sequence
-    for stops in by_trip.values():
-        stops.sort(key=lambda s: int(s["stop_sequence"]))
+    trip_list = list(trip_ids)
+    chunk_size = 900  # SQLite limit is 999 variables
+    for i in range(0, len(trip_list), chunk_size):
+        chunk = trip_list[i:i + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT * FROM stop_times WHERE trip_id IN ({placeholders}) ORDER BY trip_id, stop_sequence",
+            chunk
+        ).fetchall()
+        for r in rows:
+            by_trip.setdefault(r["trip_id"], []).append(dict(r))
+    conn.close()
     return by_trip
 
 
-def find_lines_for_stops(zip_path: Path, origin: str, destination: str, date_str: str) -> list[dict]:
-    """Find all lines that serve both origin and destination stops.
-
-    Returns list of route dicts. Scans stop_times with a fast raw parse.
-    """
-    stops = load_stops(zip_path)
-    origin_norm = _normalize(origin)
-    dest_norm = _normalize(destination)
-
-    origin_stop_ids = {sid for sid, s in stops.items() if origin_norm in _normalize(s["stop_name"])}
-    dest_stop_ids = {sid for sid, s in stops.items() if dest_norm in _normalize(s["stop_name"])}
-
-    if not origin_stop_ids or not dest_stop_ids:
-        return []
-
-    # Fast raw scan of stop_times — avoid full dict construction per row
-    # Columns: trip_id,arrival_time,departure_time,stop_id,stop_sequence
-    trip_origin: dict[str, int] = {}
-    trip_dest: dict[str, int] = {}
-    with zipfile.ZipFile(zip_path) as zf:
-        with zf.open("stop_times.txt") as f:
-            f.readline()  # skip header
-            for raw_line in f:
-                parts = raw_line.decode("utf-8-sig").split(",")
-                tid = parts[0].strip()
-                sid = parts[3].strip()
-                if sid in origin_stop_ids or sid in dest_stop_ids:
-                    seq = int(parts[4].strip())
-                    if sid in origin_stop_ids:
-                        if tid not in trip_origin or seq < trip_origin[tid]:
-                            trip_origin[tid] = seq
-                    if sid in dest_stop_ids:
-                        if tid not in trip_dest or seq > trip_dest[tid]:
-                            trip_dest[tid] = seq
-
-    valid_trip_ids = {tid for tid in trip_origin if tid in trip_dest and trip_origin[tid] < trip_dest[tid]}
-
-    if not valid_trip_ids:
-        return []
-
-    # Find which routes these trips belong to, filtered by active services
-    services = get_active_services(zip_path, date_str)
-    route_ids = set()
-    with zipfile.ZipFile(zip_path) as zf:
-        with zf.open("trips.txt") as f:
-            f.readline()  # skip header
-            for raw_line in f:
-                parts = raw_line.decode("utf-8-sig").split(",")
-                tid = parts[2].strip()  # trip_id
-                sid = parts[1].strip()  # service_id
-                rid = parts[0].strip()  # route_id
-                if tid in valid_trip_ids and sid in services:
-                    route_ids.add(rid)
-
-    all_routes = load_routes(zip_path)
-    seen_lines = set()
-    matching_routes = []
-    for r in all_routes:
-        if r["route_id"] in route_ids:
-            line = r["route_short_name"]
-            if line not in seen_lines:
-                seen_lines.add(line)
-                matching_routes.append(r)
-
-    return matching_routes
-
-
 def search_schedule(
-    zip_path: Path,
+    db_path: Path,
     line: str | None,
     origin: str,
     destination: str,
@@ -204,101 +278,148 @@ def search_schedule(
 ) -> list[dict]:
     """Search for trips from origin to destination, optionally on a specific line.
 
-    Args:
-        line: Line short name (e.g. "R11"), or None to search all lines.
-        origin: Partial stop name match, e.g. "Girona"
-        destination: Partial stop name match, e.g. "Sants"
-        date_str: YYYYMMDD, defaults to today
-        after_time: HH:MM, only show departures after this time
-
-    Returns:
-        List of dicts with departure_time, arrival_time, origin_stop, dest_stop,
-        trip_id, line, intermediate_stops, train_type.
+    Returns list of dicts with departure_time, arrival_time, origin_stop, dest_stop,
+    trip_id, line, intermediate_stops, train_type.
     """
     if date_str is None:
         date_str = datetime.now().strftime("%Y%m%d")
 
-    # Find matching routes — either for a specific line or auto-discover
-    if line:
-        routes = find_routes(zip_path, line=line)
-    else:
-        routes = find_lines_for_stops(zip_path, origin, destination, date_str)
-        if routes:
-            # Expand to all routes for the discovered lines
-            lines = {r["route_short_name"] for r in routes}
-            routes = [r for r in load_routes(zip_path) if r["route_short_name"] in lines]
-
-    if not routes:
-        return []
-
-    # Build route_id -> line name mapping
-    route_to_line = {r["route_id"]: r["route_short_name"] for r in routes}
-    route_ids = set(route_to_line.keys())
-
-    # Active services for the date
-    services = get_active_services(zip_path, date_str)
-    if not services:
-        return []
-
-    # Trips on those routes for that day
-    trips = find_trips(zip_path, route_ids, services)
-    if not trips:
-        return []
-
-    # Build trip_id -> line mapping
-    trip_to_line = {t["trip_id"]: route_to_line[t["route_id"]] for t in trips}
-    trip_ids = set(trip_to_line.keys())
-
-    # Load stop names for matching
-    stops = load_stops(zip_path)
-
-    # Load stop_times
-    all_stop_times = find_stop_times(zip_path, trip_ids)
-
+    conn = _connect(db_path)
     origin_norm = _normalize(origin)
     dest_norm = _normalize(destination)
 
+    # Find matching stop_ids
+    origin_stops = conn.execute(
+        "SELECT stop_id, stop_name FROM stops WHERE stop_name_norm LIKE ?",
+        (f"%{origin_norm}%",)
+    ).fetchall()
+    dest_stops = conn.execute(
+        "SELECT stop_id, stop_name FROM stops WHERE stop_name_norm LIKE ?",
+        (f"%{dest_norm}%",)
+    ).fetchall()
+
+    if not origin_stops or not dest_stops:
+        conn.close()
+        return []
+
+    origin_ids = {r["stop_id"] for r in origin_stops}
+    dest_ids = {r["stop_id"] for r in dest_stops}
+    origin_names = {r["stop_id"]: r["stop_name"] for r in origin_stops}
+    dest_names = {r["stop_id"]: r["stop_name"] for r in dest_stops}
+
+    # Get active services
+    dt = datetime.strptime(date_str, "%Y%m%d")
+    day_col = dt.strftime("%A").lower()
+    services = conn.execute(
+        f"SELECT service_id FROM calendar WHERE start_date <= ? AND end_date >= ? AND {day_col} = 1",
+        (date_str, date_str)
+    ).fetchall()
+    service_ids = {r["service_id"] for r in services}
+
+    if not service_ids:
+        conn.close()
+        return []
+
+    # Build the trip filter: active services + optional line filter
+    svc_ph = ",".join("?" for _ in service_ids)
+    if line:
+        trip_query = f"""
+            SELECT t.trip_id, r.route_short_name as line
+            FROM trips t
+            JOIN routes r ON t.route_id = r.route_id
+            WHERE t.service_id IN ({svc_ph})
+            AND UPPER(r.route_short_name) = ?
+        """
+        trip_params = list(service_ids) + [line.upper()]
+    else:
+        trip_query = f"""
+            SELECT t.trip_id, r.route_short_name as line
+            FROM trips t
+            JOIN routes r ON t.route_id = r.route_id
+            WHERE t.service_id IN ({svc_ph})
+        """
+        trip_params = list(service_ids)
+
+    trip_rows = conn.execute(trip_query, trip_params).fetchall()
+    trip_to_line = {r["trip_id"]: r["line"] for r in trip_rows}
+
+    if not trip_to_line:
+        conn.close()
+        return []
+
+    # Find trips that pass through both origin and destination stops
+    # Use SQL to find matching pairs efficiently
+    origin_ph = ",".join("?" for _ in origin_ids)
+    dest_ph = ",".join("?" for _ in dest_ids)
+    trip_list = list(trip_to_line.keys())
+
     results = []
-    for trip_id, stop_times in all_stop_times.items():
-        # Find origin and destination stops in this trip
-        origin_st = None
-        dest_st = None
-        for st in stop_times:
-            name = _normalize(stops.get(st["stop_id"], {}).get("stop_name", ""))
-            if origin_norm in name and origin_st is None:
-                origin_st = st
-            if dest_norm in name and origin_st is not None:
-                dest_st = st
-                break
+    chunk_size = 500
+    for i in range(0, len(trip_list), chunk_size):
+        chunk = trip_list[i:i + chunk_size]
+        trip_ph = ",".join("?" for _ in chunk)
 
-        if origin_st and dest_st:
-            dep = origin_st["departure_time"]
-            arr = dest_st["arrival_time"]
+        # Get origin stop_times
+        origin_rows = conn.execute(
+            f"""SELECT trip_id, stop_id, departure_time, stop_sequence
+                FROM stop_times
+                WHERE trip_id IN ({trip_ph}) AND stop_id IN ({origin_ph})""",
+            chunk + list(origin_ids)
+        ).fetchall()
 
-            if after_time:
-                if dep[:5] < after_time:
-                    continue
+        # Get destination stop_times
+        dest_rows = conn.execute(
+            f"""SELECT trip_id, stop_id, arrival_time, stop_sequence
+                FROM stop_times
+                WHERE trip_id IN ({trip_ph}) AND stop_id IN ({dest_ph})""",
+            chunk + list(dest_ids)
+        ).fetchall()
 
-            origin_seq = int(origin_st["stop_sequence"])
-            dest_seq = int(dest_st["stop_sequence"])
-            intermediate_stops = dest_seq - origin_seq - 1
+        # Build lookup: trip_id -> (earliest origin, latest dest)
+        trip_origin: dict[str, dict] = {}
+        for r in origin_rows:
+            tid = r["trip_id"]
+            if tid not in trip_origin or r["stop_sequence"] < trip_origin[tid]["stop_sequence"]:
+                trip_origin[tid] = dict(r)
+
+        trip_dest: dict[str, dict] = {}
+        for r in dest_rows:
+            tid = r["trip_id"]
+            if tid not in trip_dest or r["stop_sequence"] > trip_dest[tid]["stop_sequence"]:
+                trip_dest[tid] = dict(r)
+
+        # Match trips where origin comes before destination
+        for tid in trip_origin:
+            if tid not in trip_dest:
+                continue
+            o = trip_origin[tid]
+            d = trip_dest[tid]
+            if o["stop_sequence"] >= d["stop_sequence"]:
+                continue
+
+            dep = o["departure_time"]
+            if after_time and dep[:5] < after_time:
+                continue
+
+            intermediate_stops = d["stop_sequence"] - o["stop_sequence"] - 1
 
             results.append({
-                "trip_id": trip_id,
-                "line": trip_to_line.get(trip_id, "?"),
+                "trip_id": tid,
+                "line": trip_to_line[tid],
                 "departure_time": dep,
-                "arrival_time": arr,
-                "origin_stop": stops.get(origin_st["stop_id"], {}).get("stop_name", origin_st["stop_id"]),
-                "destination_stop": stops.get(dest_st["stop_id"], {}).get("stop_name", dest_st["stop_id"]),
-                "origin_stop_id": origin_st["stop_id"],
-                "destination_stop_id": dest_st["stop_id"],
+                "arrival_time": d["arrival_time"],
+                "origin_stop": origin_names.get(o["stop_id"], o["stop_id"]),
+                "destination_stop": dest_names.get(d["stop_id"], d["stop_id"]),
+                "origin_stop_id": o["stop_id"],
+                "destination_stop_id": d["stop_id"],
                 "intermediate_stops": intermediate_stops,
             })
 
-    # Classify train types — per line, since different lines have different stop patterns
+    conn.close()
+
+    # Classify train types — per line
     if results:
         from .train_type import classify
-        # Group by line for classification
         by_line: dict[str, list[dict]] = {}
         for r in results:
             by_line.setdefault(r["line"], []).append(r)
