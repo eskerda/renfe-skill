@@ -432,16 +432,18 @@ def search_schedule(
     return results
 
 
-def search_departures(
+def _search_stop_board(
     db_path: Path,
     stop: str,
+    mode: str,  # "departures" or "arrivals"
     line: str | None = None,
     date_str: str | None = None,
     after_time: str | None = None,
 ) -> list[dict]:
-    """List all departures from a stop, like a station departures board.
+    """Shared logic for departures/arrivals board.
 
-    Returns list of dicts with trip_id, line, departure_time, destination (final stop name).
+    mode="departures": exclude trips ending at this stop, show final stop as destination.
+    mode="arrivals": exclude trips starting at this stop, show first stop as origin.
     """
     if date_str is None:
         date_str = datetime.now().strftime("%Y%m%d")
@@ -449,12 +451,10 @@ def search_departures(
     conn = _connect(db_path)
     stop_norm = _normalize(stop)
 
-    # Find matching stop_ids
     stop_rows = conn.execute(
         "SELECT stop_id, stop_name FROM stops WHERE stop_name_norm LIKE ?",
         (f"%{stop_norm}%",)
     ).fetchall()
-
     if not stop_rows:
         conn.close()
         return []
@@ -462,7 +462,6 @@ def search_departures(
     stop_ids = {r["stop_id"] for r in stop_rows}
     stop_name = stop_rows[0]["stop_name"]
 
-    # Active services
     dt = datetime.strptime(date_str, "%Y%m%d")
     day_col = dt.strftime("%A").lower()
     services = conn.execute(
@@ -474,7 +473,6 @@ def search_departures(
         conn.close()
         return []
 
-    # Trips active today, optionally filtered by line
     svc_ph = ",".join("?" for _ in service_ids)
     if line:
         trip_query = f"""
@@ -497,61 +495,101 @@ def search_departures(
         conn.close()
         return []
 
-    # Find departures from the stop for these trips
     stop_ph = ",".join("?" for _ in stop_ids)
     trip_list = list(trip_to_line.keys())
 
-    departures = []
+    if mode == "departures":
+        seq_filter = "<"
+        seq_func = "MAX"
+        time_col = "departure_time"
+    else:  # arrivals
+        seq_filter = ">"
+        seq_func = "MIN"
+        time_col = "arrival_time"
+
+    results = []
     chunk_size = 500
     for i in range(0, len(trip_list), chunk_size):
         chunk = trip_list[i:i + chunk_size]
         trip_ph = ",".join("?" for _ in chunk)
 
-        # Get departure time at this stop, excluding trips where this is the final stop
-        dep_rows = conn.execute(
-            f"""SELECT st.trip_id, st.departure_time, st.stop_sequence
+        # Get time at this stop, excluding terminal stops
+        rows = conn.execute(
+            f"""SELECT st.trip_id, st.{time_col}, st.stop_sequence
                 FROM stop_times st
                 WHERE st.trip_id IN ({trip_ph}) AND st.stop_id IN ({stop_ph})
-                AND st.stop_sequence < (
-                    SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = st.trip_id
+                AND st.stop_sequence {seq_filter} (
+                    SELECT {seq_func}(stop_sequence) FROM stop_times WHERE trip_id = st.trip_id
                 )""",
             chunk + list(stop_ids)
         ).fetchall()
 
-        if not dep_rows:
+        if not rows:
             continue
 
-        # Get final stop for each matching trip
-        matching_tids = list({r["trip_id"] for r in dep_rows})
+        # Get the other end: final stop for departures, first stop for arrivals
+        matching_tids = list({r["trip_id"] for r in rows})
         mtid_ph = ",".join("?" for _ in matching_tids)
-        final_rows = conn.execute(
+        if mode == "departures":
+            end_func, end_col = "MAX", "stop_name"
+        else:
+            end_func, end_col = "MIN", "stop_name"
+
+        end_rows = conn.execute(
             f"""SELECT st.trip_id, s.stop_name
                 FROM stop_times st
                 JOIN stops s ON st.stop_id = s.stop_id
                 WHERE st.trip_id IN ({mtid_ph})
                 AND st.stop_sequence = (
-                    SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = st.trip_id
+                    SELECT {end_func}(stop_sequence) FROM stop_times WHERE trip_id = st.trip_id
                 )""",
             matching_tids
         ).fetchall()
 
-        final_by_trip = {r["trip_id"]: r["stop_name"] for r in final_rows}
+        end_by_trip = {r["trip_id"]: r["stop_name"] for r in end_rows}
 
-        for r in dep_rows:
+        for r in rows:
             tid = r["trip_id"]
-            dep = r["departure_time"]
+            t = r[time_col]
 
-            if after_time and dep[:5] < after_time:
+            if after_time and t[:5] < after_time:
                 continue
 
-            departures.append({
+            entry = {
                 "trip_id": tid,
                 "line": trip_to_line[tid],
-                "departure_time": dep,
-                "destination": final_by_trip.get(tid, "?"),
+                "time": t,
                 "stop_name": stop_name,
-            })
+            }
+            if mode == "departures":
+                entry["destination"] = end_by_trip.get(tid, "?")
+            else:
+                entry["origin"] = end_by_trip.get(tid, "?")
+
+            results.append(entry)
 
     conn.close()
-    departures.sort(key=lambda r: r["departure_time"])
-    return departures
+    results.sort(key=lambda r: r["time"])
+    return results
+
+
+def search_departures(
+    db_path: Path,
+    stop: str,
+    line: str | None = None,
+    date_str: str | None = None,
+    after_time: str | None = None,
+) -> list[dict]:
+    """List all departures from a stop."""
+    return _search_stop_board(db_path, stop, "departures", line, date_str, after_time)
+
+
+def search_arrivals(
+    db_path: Path,
+    stop: str,
+    line: str | None = None,
+    date_str: str | None = None,
+    after_time: str | None = None,
+) -> list[dict]:
+    """List all arrivals at a stop."""
+    return _search_stop_board(db_path, stop, "arrivals", line, date_str, after_time)

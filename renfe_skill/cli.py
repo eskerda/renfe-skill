@@ -4,7 +4,7 @@ import argparse
 import sys
 from datetime import datetime
 
-from .gtfs_static import download_gtfs, find_routes, find_trips, get_active_services, load_stops, search_schedule, search_departures
+from .gtfs_static import download_gtfs, find_routes, find_trips, get_active_services, load_stops, search_schedule, search_departures, search_arrivals
 from .gtfs_rt import get_alerts, get_trip_updates, get_vehicle_positions
 
 
@@ -173,7 +173,7 @@ def cmd_departures(args):
     for r in results:
         label = _train_label(r["trip_id"], all_train_numbers)
         delay_s = delay_by_train.get(label)
-        dep = r["departure_time"][:5]
+        dep = r["time"][:5]
 
         if delay_s and delay_s != 0:
             delay_min = delay_s / 60
@@ -186,6 +186,66 @@ def cmd_departures(args):
         print(f"{label:>7}  {r['line']:>4}  {dep:>10}  {delay_str:>7}  {r['destination']}")
 
     print(f"\n{len(results)} departures.")
+
+
+def cmd_arrivals(args):
+    """Station arrivals board: all trains arriving at a stop."""
+    db_path = download_gtfs(force=args.refresh)
+
+    date_str = args.date or datetime.now().strftime("%Y%m%d")
+    after_time = args.after or None
+    line = args.line or None
+
+    results = search_arrivals(
+        db_path,
+        stop=args.stop,
+        line=line,
+        date_str=date_str,
+        after_time=after_time,
+    )
+
+    if not results:
+        print(f"No arrivals found at '{args.stop}' on {date_str}")
+        return
+
+    # Fetch live delays
+    services = get_active_services(db_path, date_str)
+    lines_in_results = {r["line"] for r in results}
+    delay_by_train: dict[str, int] = {}
+    all_train_numbers: set[str] = set()
+    for ln in lines_in_results:
+        routes = find_routes(db_path, line=ln)
+        train_numbers = _get_train_numbers(db_path, routes, services)
+        all_train_numbers.update(train_numbers)
+        delays = _match_rt_entities(get_trip_updates(), ln, train_numbers)
+        for d in delays:
+            lbl = _train_label(d["trip_id"], train_numbers)
+            delay_by_train[lbl] = d["delay_seconds"]
+
+    stop_name = results[0]["stop_name"]
+    print(f"Arrivals at {stop_name} on {date_str}")
+    if after_time:
+        print(f"(showing arrivals after {after_time})")
+    print()
+    print(f"{'Train':>7}  {'Line':>4}  {'Arrival':>10}  {'Delay':>7}  Origin")
+    print(f"{'─' * 7}  {'─' * 4}  {'─' * 10}  {'─' * 7}  {'─' * 30}")
+
+    for r in results:
+        label = _train_label(r["trip_id"], all_train_numbers)
+        delay_s = delay_by_train.get(label)
+        arr = r["time"][:5]
+
+        if delay_s and delay_s != 0:
+            delay_min = delay_s / 60
+            sign = "+" if delay_s > 0 else ""
+            delay_str = f"{sign}{delay_min:.0f}m"
+            arr = f"*{arr}"
+        else:
+            delay_str = ""
+
+        print(f"{label:>7}  {r['line']:>4}  {arr:>10}  {delay_str:>7}  {r['origin']}")
+
+    print(f"\n{len(results)} arrivals.")
 
 
 def cmd_alerts(args):
@@ -379,6 +439,14 @@ def main():
     p_dep.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
     p_dep.add_argument("--after", "-a", help="Only show departures after HH:MM")
     p_dep.set_defaults(func=cmd_departures)
+
+    # arrivals
+    p_arr = sub.add_parser("arrivals", aliases=["arr"], help="Station arrivals board")
+    p_arr.add_argument("--stop", "-s", required=True, help="Stop name (partial match)")
+    p_arr.add_argument("--line", "-l", help="Filter by line")
+    p_arr.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
+    p_arr.add_argument("--after", "-a", help="Only show arrivals after HH:MM")
+    p_arr.set_defaults(func=cmd_arrivals)
 
     # alerts
     p_alerts = sub.add_parser("alerts", aliases=["a"], help="Service alerts for a line")
