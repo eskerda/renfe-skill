@@ -75,16 +75,34 @@ def cmd_schedule(args):
         print(f"No trips found for {args.line} from '{args.origin}' to '{args.destination}' on {date_str}")
         return
 
+    # Fetch live delays and match to schedule results
+    routes = find_routes(zip_path, line=args.line)
+    services = get_active_services(zip_path, date_str)
+    train_numbers = _get_train_numbers(zip_path, routes, services)
+    delays = _match_rt_entities(get_trip_updates(), args.line, train_numbers)
+    delay_by_train = {}
+    for d in delays:
+        label = _train_label(d["trip_id"], train_numbers)
+        delay_by_train[label] = d["delay_seconds"]
+
     print(f"Schedule for {args.line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
     if after_time:
         print(f"(showing departures after {after_time})")
     print()
-    print(f"{'Departure':>10}  {'Arrival':>10}  {'Type':>4}  {'Stops':>5}  Trip ID")
-    print(f"{'─' * 10}  {'─' * 10}  {'─' * 4}  {'─' * 5}  {'─' * 20}")
+    print(f"{'Departure':>10}  {'Arrival':>10}  {'Type':>4}  {'Delay':>7}  Trip ID")
+    print(f"{'─' * 10}  {'─' * 10}  {'─' * 4}  {'─' * 7}  {'─' * 20}")
     for r in results:
         tt = r.get('train_type', '?')
-        st = r.get('intermediate_stops', '?')
-        print(f"{r['departure_time']:>10}  {r['arrival_time']:>10}  {tt:>4}  {st:>5}  {r['trip_id']}")
+        # Match train number from trip_id
+        label = _train_label(r["trip_id"], train_numbers)
+        delay_s = delay_by_train.get(label)
+        if delay_s is not None:
+            delay_min = delay_s / 60
+            sign = "+" if delay_s > 0 else ""
+            delay_str = f"{sign}{delay_min:.0f}m"
+        else:
+            delay_str = ""
+        print(f"{r['departure_time']:>10}  {r['arrival_time']:>10}  {tt:>4}  {delay_str:>7}  {r['trip_id']}")
 
     print(f"\n{len(results)} trips found.")
 
