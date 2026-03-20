@@ -55,6 +55,61 @@ renfe --no-rt schedule --from "Sants" --to "Girona"
 
 Stop names are partial and accent-insensitive: "Gracia" matches "Gràcia", "Macanet" matches "Maçanet".
 
+## Example output
+
+### Schedule
+
+```
+$ renfe schedule --line R11 --from Sants --to Girona
+
+Schedule for R11: Barcelona-Sants → Girona on 20260320
+
+  Train   Departure   Arrival  Type    Delay
+───────  ──────────  ────────  ────  ───────
+  15720       05:56     07:15    MD
+  15900       06:16     07:47     R
+  15722       06:46     08:05    MD
+  15904      *07:16     08:57     R     +47m
+  15802      *08:16     09:35    MD     +39m
+  15908      *09:16     10:47     R      +5m
+  15806       10:16     11:35    MD
+  15912       11:16     12:47     R
+```
+
+### Departures board
+
+```
+$ renfe dep --stop Sants --after 17:00
+
+Departures from Barcelona-Sants on 20260320
+(showing departures after 17:00)
+
+  Train  Line   Departure    Delay  Destination
+───────  ────  ──────────  ───────  ──────────────────────────────
+  25444   R2N       17:01           Sant Celoni
+  25767    R1       17:04           Arenys De Mar
+  77746    R4       17:07           Martorell-Central
+  77247   R2S       17:14           Sant Vicenç De Calders
+  25657    R1       17:16           Calella
+  15816   R11       17:16           Portbou
+```
+
+### Live positions
+
+```
+$ renfe positions --line R11
+
+Active trains on line R11:
+
+   Train  Status          Stop                                  Lat        Lon
+────────  ──────────────  ──────────────────────────────  ─────────  ─────────
+   15726  IN_TRANSIT_TO   Girona                           41.97944    2.81673
+   15816  IN_TRANSIT_TO   Granollers-Centre                41.60764    2.29290
+   15818  STOPPED_AT      Barcelona-El Clot                41.41008    2.18879
+   15870  STOPPED_AT      Hostalric                        41.77167    2.67315
+   15918  STOPPED_AT      Figueres                         42.35360    3.13720
+```
+
 ## Data sources
 
 - **Schedule**: [GTFS static feed](https://ssl.renfe.com/ftransit/Fichero_CER_FOMENTO/fomento_transit.zip) — cached as SQLite, refreshed weekly
