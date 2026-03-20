@@ -54,6 +54,23 @@ def _match_rt_entities(entities: list[dict], lines: set[str], train_numbers: set
     return results
 
 
+def _fetch_delays(db_path, lines: set[str], date_str: str, skip_rt: bool = False) -> tuple[dict[str, int], set[str]]:
+    """Fetch RT delays for a set of lines. Returns (delay_by_train, train_numbers).
+
+    Train numbers are always resolved (for display). RT HTTP calls are skipped if skip_rt=True.
+    """
+    services = get_active_services(db_path, date_str)
+    train_numbers = _get_train_numbers_for_lines(db_path, lines, services)
+    if skip_rt:
+        return {}, train_numbers
+    delays = _match_rt_entities(get_trip_updates(), lines, train_numbers)
+    delay_by_train: dict[str, int] = {}
+    for d in delays:
+        lbl = _train_label(d["trip_id"], train_numbers)
+        delay_by_train[lbl] = d["delay_seconds"]
+    return delay_by_train, train_numbers
+
+
 def _train_label(trip_id: str, train_numbers: set[str]) -> str:
     """Extract a human-readable train number from a trip_id."""
     for num in sorted(train_numbers, key=len, reverse=True):
@@ -87,15 +104,8 @@ def cmd_schedule(args):
         print(f"No trips found from '{args.origin}' to '{args.destination}'{line_str} on {date_str}")
         return
 
-    # Fetch live delays
-    services = get_active_services(zip_path, date_str)
     lines_in_results = {r["line"] for r in results}
-    all_train_numbers = _get_train_numbers_for_lines(zip_path, lines_in_results, services)
-    delays = _match_rt_entities(get_trip_updates(), lines_in_results, all_train_numbers)
-    delay_by_train: dict[str, int] = {}
-    for d in delays:
-        lbl = _train_label(d["trip_id"], all_train_numbers)
-        delay_by_train[lbl] = d["delay_seconds"]
+    delay_by_train, all_train_numbers = _fetch_delays(zip_path, lines_in_results, date_str, skip_rt=args.no_rt)
 
     multi_line = len(lines_in_results) > 1
     header_line = ", ".join(sorted(lines_in_results)) if multi_line else results[0].get("line", "")
@@ -154,15 +164,8 @@ def cmd_departures(args):
         print(f"No departures found from '{args.stop}' on {date_str}")
         return
 
-    # Fetch live delays
-    services = get_active_services(db_path, date_str)
     lines_in_results = {r["line"] for r in results}
-    all_train_numbers = _get_train_numbers_for_lines(db_path, lines_in_results, services)
-    delays = _match_rt_entities(get_trip_updates(), lines_in_results, all_train_numbers)
-    delay_by_train: dict[str, int] = {}
-    for d in delays:
-        lbl = _train_label(d["trip_id"], all_train_numbers)
-        delay_by_train[lbl] = d["delay_seconds"]
+    delay_by_train, all_train_numbers = _fetch_delays(db_path, lines_in_results, date_str, skip_rt=args.no_rt)
 
     stop_name = results[0]["stop_name"]
     print(f"Departures from {stop_name} on {date_str}")
@@ -210,15 +213,8 @@ def cmd_arrivals(args):
         print(f"No arrivals found at '{args.stop}' on {date_str}")
         return
 
-    # Fetch live delays
-    services = get_active_services(db_path, date_str)
     lines_in_results = {r["line"] for r in results}
-    all_train_numbers = _get_train_numbers_for_lines(db_path, lines_in_results, services)
-    delays = _match_rt_entities(get_trip_updates(), lines_in_results, all_train_numbers)
-    delay_by_train: dict[str, int] = {}
-    for d in delays:
-        lbl = _train_label(d["trip_id"], all_train_numbers)
-        delay_by_train[lbl] = d["delay_seconds"]
+    delay_by_train, all_train_numbers = _fetch_delays(db_path, lines_in_results, date_str, skip_rt=args.no_rt)
 
     stop_name = results[0]["stop_name"]
     print(f"Arrivals at {stop_name} on {date_str}")
@@ -419,6 +415,7 @@ def main():
         description="RENFE Cercanías schedule and alerts via GTFS",
     )
     parser.add_argument("--refresh", action="store_true", help="Force refresh GTFS data")
+    parser.add_argument("--no-rt", action="store_true", help="Skip realtime delay lookups (faster)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # schedule
