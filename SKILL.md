@@ -35,26 +35,28 @@ Find departures from origin to destination. Line is optional — when omitted, a
 uv run --directory <skill_dir> renfe schedule --from "Sants" --to "Sitges"
 uv run --directory <skill_dir> renfe schedule --line R11 --from "Girona" --to "Sants"
 uv run --directory <skill_dir> renfe schedule --line R11 --from "Sants" --to "Figueres" --after 18:00
+uv run --directory <skill_dir> renfe schedule --from "Sants" --to "Girona" --after now --before +2h
 uv run --directory <skill_dir> renfe schedule --from "Sants" --to "Caldes" --date 20260320
 ```
 
 ### Station departures board
 
-All trains departing from a stop, with destination — like a station screen.
+All trains departing from a stop, with destination — like a station screen. Defaults to upcoming trains (from now).
 
 ```bash
 uv run --directory <skill_dir> renfe departures --stop "Sants"
 uv run --directory <skill_dir> renfe dep --stop "Sants" --line R11
-uv run --directory <skill_dir> renfe dep --stop "Sants" --after 09:30
+uv run --directory <skill_dir> renfe dep --stop "Sants" --after +1h --before +3h
 ```
 
 ### Station arrivals board
 
-All trains arriving at a stop, with origin.
+All trains arriving at a stop, with origin. Defaults to upcoming arrivals (from now).
 
 ```bash
 uv run --directory <skill_dir> renfe arrivals --stop "Sants"
 uv run --directory <skill_dir> renfe arr --stop "Sants" --line R11
+uv run --directory <skill_dir> renfe arr --stop "Sants" --before +2h
 ```
 
 ### Service alerts
@@ -114,10 +116,18 @@ Stop names are matched case-insensitively with accent normalization. Partial mat
 
 Madrid, Barcelona, Rodalies Catalunya, Málaga, Sevilla, Valencia, Bilbao, Santander, Asturias, Cádiz, Murcia/Alicante, Castellón, Zaragoza.
 
+## Time arguments
+
+`--after` and `--before` accept:
+- `HH:MM` — absolute time (e.g. `18:00`)
+- `now` — current time
+- `+1h`, `+30m`, `+1h30m` — relative to now
+
+Departures and arrivals default `--after` to `now` (upcoming only). Schedule shows the full day unless filtered.
+
 ## Tips
 
 - Line names: Madrid/regional use C1-C10, Rodalies Catalunya uses R1-R17/RG1/RL3 etc.
-- Use `--after HH:MM` to filter from a specific time onwards.
 - Use `stops` command first if unsure of exact stop names.
 - The train number shown in output is the common key across all commands — use it to cross-reference schedule → positions → delays.
 - MD trains are significantly faster (e.g. Sants→Girona: ~1h05 MD vs ~1h30 R).

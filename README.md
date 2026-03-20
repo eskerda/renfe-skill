@@ -41,17 +41,18 @@ Schedule for R11: Barcelona-Sants → Girona on 20260320
 ```bash
 renfe schedule --from "Sants" --to "Sitges"            # auto-detect line
 renfe schedule --from "Sants" --to "Figueres" --after 18:00
+renfe schedule --from "Sants" --to "Girona" --after now --before +2h
 ```
 
 ### Departures / Arrivals board
 
-All trains from/to a stop — like a station screen.
+All trains from/to a stop — like a station screen. Defaults to upcoming trains.
 
 ```
-$ renfe dep --stop Sants --after 17:00
+$ renfe dep --stop Sants
 
 Departures from Barcelona-Sants on 20260320
-(showing departures after 17:00)
+(after 18:06)
 
   Train  Line   Departure    Delay  Destination
 ───────  ────  ──────────  ───────  ──────────────────────────────
@@ -64,8 +65,9 @@ Departures from Barcelona-Sants on 20260320
 ```
 
 ```bash
-renfe dep --stop "Sants" --line R11         # filter by line
-renfe arr --stop "Sants"                    # arrivals board
+renfe dep --stop "Sants" --line R11                    # filter by line
+renfe dep --stop "Sants" --after +1h --before +3h      # time window
+renfe arr --stop "Sants"                               # arrivals board
 ```
 
 ### Live positions
@@ -93,7 +95,11 @@ renfe stops --line R11                      # list stops on a line
 renfe routes                                # list all lines
 renfe routes --nucleus Barcelona            # filter by network
 renfe --no-rt dep --stop "Sants"            # skip RT (faster, no Delay column)
+renfe dep --stop "Sants" --after +1h        # departures in 1 hour
+renfe schedule --from Sants --to Girona --after now --before +2h
 ```
+
+Time args accept: `HH:MM`, `now`, `+1h`, `+30m`, `+1h30m`. Departures/arrivals default to now.
 
 Stop names are partial and accent-insensitive: "Gracia" matches "Gràcia", "Macanet" matches "Maçanet".
 
