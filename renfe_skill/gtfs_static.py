@@ -507,30 +507,35 @@ def search_departures(
         chunk = trip_list[i:i + chunk_size]
         trip_ph = ",".join("?" for _ in chunk)
 
-        # Get departure time at this stop
+        # Get departure time at this stop, excluding trips where this is the final stop
         dep_rows = conn.execute(
-            f"""SELECT trip_id, departure_time, stop_sequence
-                FROM stop_times
-                WHERE trip_id IN ({trip_ph}) AND stop_id IN ({stop_ph})""",
+            f"""SELECT st.trip_id, st.departure_time, st.stop_sequence
+                FROM stop_times st
+                WHERE st.trip_id IN ({trip_ph}) AND st.stop_id IN ({stop_ph})
+                AND st.stop_sequence < (
+                    SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = st.trip_id
+                )""",
             chunk + list(stop_ids)
         ).fetchall()
 
         if not dep_rows:
             continue
 
-        # Get final stop for each trip (max stop_sequence)
+        # Get final stop for each matching trip
+        matching_tids = list({r["trip_id"] for r in dep_rows})
+        mtid_ph = ",".join("?" for _ in matching_tids)
         final_rows = conn.execute(
-            f"""SELECT st.trip_id, st.stop_id, st.arrival_time, s.stop_name
+            f"""SELECT st.trip_id, s.stop_name
                 FROM stop_times st
                 JOIN stops s ON st.stop_id = s.stop_id
-                WHERE st.trip_id IN ({trip_ph})
+                WHERE st.trip_id IN ({mtid_ph})
                 AND st.stop_sequence = (
                     SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = st.trip_id
                 )""",
-            chunk
+            matching_tids
         ).fetchall()
 
-        final_by_trip = {r["trip_id"]: dict(r) for r in final_rows}
+        final_by_trip = {r["trip_id"]: r["stop_name"] for r in final_rows}
 
         for r in dep_rows:
             tid = r["trip_id"]
@@ -539,12 +544,11 @@ def search_departures(
             if after_time and dep[:5] < after_time:
                 continue
 
-            final = final_by_trip.get(tid, {})
             departures.append({
                 "trip_id": tid,
                 "line": trip_to_line[tid],
                 "departure_time": dep,
-                "destination": final.get("stop_name", "?"),
+                "destination": final_by_trip.get(tid, "?"),
                 "stop_name": stop_name,
             })
 
