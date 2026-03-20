@@ -17,47 +17,9 @@ uv venv && uv pip install -e .
 
 ## Usage
 
-```bash
-# Search schedule (line auto-detected if omitted)
-renfe schedule --from "Sants" --to "Sitges"
-renfe schedule --line R11 --from "Girona" --to "Sants"
-renfe schedule --from "Sants" --to "Figueres" --after 18:00
-
-# Station departures board
-renfe departures --stop "Sants"
-renfe dep --stop "Sants" --line R11
-renfe dep --stop "Sants" --after 09:30
-
-# Station arrivals board
-renfe arrivals --stop "Sants"
-renfe arr --stop "Sants" --line R11
-
-# Service alerts
-renfe alerts --line R11
-
-# Current delays
-renfe delays --line R11
-
-# Live train positions
-renfe positions --line R11
-
-# List stops on a line
-renfe stops --line R11
-
-# List available lines
-renfe routes
-renfe routes --nucleus Barcelona
-
-# Skip realtime lookups (faster, no Delay column)
-renfe --no-rt dep --stop "Sants"
-renfe --no-rt schedule --from "Sants" --to "Girona"
-```
-
-Stop names are partial and accent-insensitive: "Gracia" matches "Gràcia", "Macanet" matches "Maçanet".
-
-## Example output
-
 ### Schedule
+
+Search by origin and destination. Line is auto-detected when omitted.
 
 ```
 $ renfe schedule --line R11 --from Sants --to Girona
@@ -76,7 +38,14 @@ Schedule for R11: Barcelona-Sants → Girona on 20260320
   15912       11:16     12:47     R
 ```
 
-### Departures board
+```bash
+renfe schedule --from "Sants" --to "Sitges"            # auto-detect line
+renfe schedule --from "Sants" --to "Figueres" --after 18:00
+```
+
+### Departures / Arrivals board
+
+All trains from/to a stop — like a station screen.
 
 ```
 $ renfe dep --stop Sants --after 17:00
@@ -94,6 +63,11 @@ Departures from Barcelona-Sants on 20260320
   15816   R11       17:16           Portbou
 ```
 
+```bash
+renfe dep --stop "Sants" --line R11         # filter by line
+renfe arr --stop "Sants"                    # arrivals board
+```
+
 ### Live positions
 
 ```
@@ -109,6 +83,19 @@ Active trains on line R11:
    15870  STOPPED_AT      Hostalric                        41.77167    2.67315
    15918  STOPPED_AT      Figueres                         42.35360    3.13720
 ```
+
+### Other commands
+
+```bash
+renfe alerts --line R11                     # service alerts
+renfe delays --line R11                     # current delays
+renfe stops --line R11                      # list stops on a line
+renfe routes                                # list all lines
+renfe routes --nucleus Barcelona            # filter by network
+renfe --no-rt dep --stop "Sants"            # skip RT (faster, no Delay column)
+```
+
+Stop names are partial and accent-insensitive: "Gracia" matches "Gràcia", "Macanet" matches "Maçanet".
 
 ## Data sources
 
