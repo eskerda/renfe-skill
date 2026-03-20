@@ -275,6 +275,7 @@ def search_schedule(
     destination: str,
     date_str: str | None = None,
     after_time: str | None = None,
+    before_time: str | None = None,
 ) -> list[dict]:
     """Search for trips from origin to destination, optionally on a specific line.
 
@@ -400,6 +401,8 @@ def search_schedule(
             dep = o["departure_time"]
             if after_time and dep[:5] < after_time:
                 continue
+            if before_time and dep[:5] > before_time:
+                continue
 
             intermediate_stops = d["stop_sequence"] - o["stop_sequence"] - 1
 
@@ -439,6 +442,7 @@ def _search_stop_board(
     line: str | None = None,
     date_str: str | None = None,
     after_time: str | None = None,
+    before_time: str | None = None,
 ) -> list[dict]:
     """Shared logic for departures/arrivals board.
 
@@ -554,6 +558,8 @@ def _search_stop_board(
 
             if after_time and t[:5] < after_time:
                 continue
+            if before_time and t[:5] > before_time:
+                continue
 
             entry = {
                 "trip_id": tid,
@@ -579,9 +585,10 @@ def search_departures(
     line: str | None = None,
     date_str: str | None = None,
     after_time: str | None = None,
+    before_time: str | None = None,
 ) -> list[dict]:
     """List all departures from a stop."""
-    return _search_stop_board(db_path, stop, "departures", line, date_str, after_time)
+    return _search_stop_board(db_path, stop, "departures", line, date_str, after_time, before_time)
 
 
 def search_arrivals(
@@ -590,6 +597,7 @@ def search_arrivals(
     line: str | None = None,
     date_str: str | None = None,
     after_time: str | None = None,
+    before_time: str | None = None,
 ) -> list[dict]:
     """List all arrivals at a stop."""
-    return _search_stop_board(db_path, stop, "arrivals", line, date_str, after_time)
+    return _search_stop_board(db_path, stop, "arrivals", line, date_str, after_time, before_time)

@@ -54,6 +54,30 @@ def _match_rt_entities(entities: list[dict], lines: set[str], train_numbers: set
     return results
 
 
+def _parse_time_arg(value: str | None, default: str | None = None) -> str | None:
+    """Parse a time argument: HH:MM, 'now', or relative like +1h, +30m, +1h30m.
+
+    Returns HH:MM string or None.
+    """
+    if value is None:
+        return default
+    value = value.strip().lower()
+    if value == "now":
+        return datetime.now().strftime("%H:%M")
+    if value.startswith("+"):
+        import re
+        match = re.match(r'\+(?:(\d+)h)?(?:(\d+)m)?$', value)
+        if not match:
+            raise ValueError(f"Invalid relative time: {value}. Use +1h, +30m, +1h30m")
+        hours = int(match.group(1) or 0)
+        minutes = int(match.group(2) or 0)
+        from datetime import timedelta
+        t = datetime.now() + timedelta(hours=hours, minutes=minutes)
+        return t.strftime("%H:%M")
+    # Assume HH:MM
+    return value
+
+
 def _fetch_delays(db_path, lines: set[str], date_str: str, skip_rt: bool = False) -> tuple[dict[str, int], set[str]]:
     """Fetch RT delays for a set of lines. Returns (delay_by_train, train_numbers).
 
@@ -87,7 +111,8 @@ def cmd_schedule(args):
     zip_path = download_gtfs(force=args.refresh)
 
     date_str = args.date or datetime.now().strftime("%Y%m%d")
-    after_time = args.after or None
+    after_time = _parse_time_arg(args.after)
+    before_time = _parse_time_arg(args.before)
     line = args.line or None
 
     results = search_schedule(
@@ -97,6 +122,7 @@ def cmd_schedule(args):
         destination=args.destination,
         date_str=date_str,
         after_time=after_time,
+        before_time=before_time,
     )
 
     if not results:
@@ -110,8 +136,13 @@ def cmd_schedule(args):
     multi_line = len(lines_in_results) > 1
     header_line = ", ".join(sorted(lines_in_results)) if multi_line else results[0].get("line", "")
     print(f"Schedule for {header_line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
+    time_filter = ""
     if after_time:
-        print(f"(showing departures after {after_time})")
+        time_filter += f"after {after_time}"
+    if before_time:
+        time_filter += f"{', ' if time_filter else ''}before {before_time}"
+    if time_filter:
+        print(f"({time_filter})")
     print()
 
     rt = not args.no_rt
@@ -157,7 +188,9 @@ def cmd_departures(args):
     db_path = download_gtfs(force=args.refresh)
 
     date_str = args.date or datetime.now().strftime("%Y%m%d")
-    after_time = args.after or None
+    now_default = datetime.now().strftime("%H:%M")
+    after_time = _parse_time_arg(args.after, default=now_default)
+    before_time = _parse_time_arg(args.before)
     line = args.line or None
 
     results = search_departures(
@@ -166,6 +199,7 @@ def cmd_departures(args):
         line=line,
         date_str=date_str,
         after_time=after_time,
+        before_time=before_time,
     )
 
     if not results:
@@ -177,8 +211,13 @@ def cmd_departures(args):
 
     stop_name = results[0]["stop_name"]
     print(f"Departures from {stop_name} on {date_str}")
+    time_filter = ""
     if after_time:
-        print(f"(showing departures after {after_time})")
+        time_filter += f"after {after_time}"
+    if before_time:
+        time_filter += f"{', ' if time_filter else ''}before {before_time}"
+    if time_filter:
+        print(f"({time_filter})")
     print()
     rt = not args.no_rt
     hdr = f"{'Train':>7}  {'Line':>4}  {'Departure':>10}"
@@ -217,7 +256,9 @@ def cmd_arrivals(args):
     db_path = download_gtfs(force=args.refresh)
 
     date_str = args.date or datetime.now().strftime("%Y%m%d")
-    after_time = args.after or None
+    now_default = datetime.now().strftime("%H:%M")
+    after_time = _parse_time_arg(args.after, default=now_default)
+    before_time = _parse_time_arg(args.before)
     line = args.line or None
 
     results = search_arrivals(
@@ -226,6 +267,7 @@ def cmd_arrivals(args):
         line=line,
         date_str=date_str,
         after_time=after_time,
+        before_time=before_time,
     )
 
     if not results:
@@ -237,8 +279,13 @@ def cmd_arrivals(args):
 
     stop_name = results[0]["stop_name"]
     print(f"Arrivals at {stop_name} on {date_str}")
+    time_filter = ""
     if after_time:
-        print(f"(showing arrivals after {after_time})")
+        time_filter += f"after {after_time}"
+    if before_time:
+        time_filter += f"{', ' if time_filter else ''}before {before_time}"
+    if time_filter:
+        print(f"({time_filter})")
     print()
     rt = not args.no_rt
     hdr = f"{'Train':>7}  {'Line':>4}  {'Arrival':>10}"
@@ -454,7 +501,8 @@ def main():
     p_sched.add_argument("--from", "-f", dest="origin", required=True, help="Origin stop (partial name)")
     p_sched.add_argument("--to", "-t", dest="destination", required=True, help="Destination stop (partial name)")
     p_sched.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
-    p_sched.add_argument("--after", "-a", help="Only show departures after HH:MM")
+    p_sched.add_argument("--after", "-a", help="Show departures after TIME (HH:MM, now, +1h, +30m)")
+    p_sched.add_argument("--before", "-b", help="Show departures before TIME")
     p_sched.set_defaults(func=cmd_schedule)
 
     # departures
@@ -462,7 +510,8 @@ def main():
     p_dep.add_argument("--stop", "-s", required=True, help="Stop name (partial match)")
     p_dep.add_argument("--line", "-l", help="Filter by line")
     p_dep.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
-    p_dep.add_argument("--after", "-a", help="Only show departures after HH:MM")
+    p_dep.add_argument("--after", "-a", help="Show departures after TIME (default: now)")
+    p_dep.add_argument("--before", "-b", help="Show departures before TIME")
     p_dep.set_defaults(func=cmd_departures)
 
     # arrivals
@@ -470,7 +519,8 @@ def main():
     p_arr.add_argument("--stop", "-s", required=True, help="Stop name (partial match)")
     p_arr.add_argument("--line", "-l", help="Filter by line")
     p_arr.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
-    p_arr.add_argument("--after", "-a", help="Only show arrivals after HH:MM")
+    p_arr.add_argument("--after", "-a", help="Show arrivals after TIME (default: now)")
+    p_arr.add_argument("--before", "-b", help="Show arrivals before TIME")
     p_arr.set_defaults(func=cmd_arrivals)
 
     # alerts
