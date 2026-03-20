@@ -430,3 +430,124 @@ def search_schedule(
 
     results.sort(key=lambda r: r["departure_time"])
     return results
+
+
+def search_departures(
+    db_path: Path,
+    stop: str,
+    line: str | None = None,
+    date_str: str | None = None,
+    after_time: str | None = None,
+) -> list[dict]:
+    """List all departures from a stop, like a station departures board.
+
+    Returns list of dicts with trip_id, line, departure_time, destination (final stop name).
+    """
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y%m%d")
+
+    conn = _connect(db_path)
+    stop_norm = _normalize(stop)
+
+    # Find matching stop_ids
+    stop_rows = conn.execute(
+        "SELECT stop_id, stop_name FROM stops WHERE stop_name_norm LIKE ?",
+        (f"%{stop_norm}%",)
+    ).fetchall()
+
+    if not stop_rows:
+        conn.close()
+        return []
+
+    stop_ids = {r["stop_id"] for r in stop_rows}
+    stop_name = stop_rows[0]["stop_name"]
+
+    # Active services
+    dt = datetime.strptime(date_str, "%Y%m%d")
+    day_col = dt.strftime("%A").lower()
+    services = conn.execute(
+        f"SELECT service_id FROM calendar WHERE start_date <= ? AND end_date >= ? AND {day_col} = 1",
+        (date_str, date_str)
+    ).fetchall()
+    service_ids = {r["service_id"] for r in services}
+    if not service_ids:
+        conn.close()
+        return []
+
+    # Trips active today, optionally filtered by line
+    svc_ph = ",".join("?" for _ in service_ids)
+    if line:
+        trip_query = f"""
+            SELECT t.trip_id, r.route_short_name as line
+            FROM trips t JOIN routes r ON t.route_id = r.route_id
+            WHERE t.service_id IN ({svc_ph}) AND UPPER(r.route_short_name) = ?
+        """
+        trip_params = list(service_ids) + [line.upper()]
+    else:
+        trip_query = f"""
+            SELECT t.trip_id, r.route_short_name as line
+            FROM trips t JOIN routes r ON t.route_id = r.route_id
+            WHERE t.service_id IN ({svc_ph})
+        """
+        trip_params = list(service_ids)
+
+    trip_rows = conn.execute(trip_query, trip_params).fetchall()
+    trip_to_line = {r["trip_id"]: r["line"] for r in trip_rows}
+    if not trip_to_line:
+        conn.close()
+        return []
+
+    # Find departures from the stop for these trips
+    stop_ph = ",".join("?" for _ in stop_ids)
+    trip_list = list(trip_to_line.keys())
+
+    departures = []
+    chunk_size = 500
+    for i in range(0, len(trip_list), chunk_size):
+        chunk = trip_list[i:i + chunk_size]
+        trip_ph = ",".join("?" for _ in chunk)
+
+        # Get departure time at this stop
+        dep_rows = conn.execute(
+            f"""SELECT trip_id, departure_time, stop_sequence
+                FROM stop_times
+                WHERE trip_id IN ({trip_ph}) AND stop_id IN ({stop_ph})""",
+            chunk + list(stop_ids)
+        ).fetchall()
+
+        if not dep_rows:
+            continue
+
+        # Get final stop for each trip (max stop_sequence)
+        final_rows = conn.execute(
+            f"""SELECT st.trip_id, st.stop_id, st.arrival_time, s.stop_name
+                FROM stop_times st
+                JOIN stops s ON st.stop_id = s.stop_id
+                WHERE st.trip_id IN ({trip_ph})
+                AND st.stop_sequence = (
+                    SELECT MAX(stop_sequence) FROM stop_times WHERE trip_id = st.trip_id
+                )""",
+            chunk
+        ).fetchall()
+
+        final_by_trip = {r["trip_id"]: dict(r) for r in final_rows}
+
+        for r in dep_rows:
+            tid = r["trip_id"]
+            dep = r["departure_time"]
+
+            if after_time and dep[:5] < after_time:
+                continue
+
+            final = final_by_trip.get(tid, {})
+            departures.append({
+                "trip_id": tid,
+                "line": trip_to_line[tid],
+                "departure_time": dep,
+                "destination": final.get("stop_name", "?"),
+                "stop_name": stop_name,
+            })
+
+    conn.close()
+    departures.sort(key=lambda r: r["departure_time"])
+    return departures
