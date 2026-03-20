@@ -112,6 +112,7 @@ def cmd_schedule(args):
             delay_min = delay_s / 60
             sign = "+" if delay_s > 0 else ""
             delay_str = f"{sign}{delay_min:.0f}m"
+            dep = f"*{dep}"
         else:
             delay_str = ""
         print(f"{label:>7}  {dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}")
