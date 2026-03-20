@@ -22,52 +22,77 @@ uv venv && uv pip install -e .
 Search by origin and destination. Line is auto-detected when omitted.
 
 ```
-$ renfe schedule --line R11 --from Sants --to Girona
+$ renfe schedule --from Sants --to Girona --after 17:00 --before 21:00
 
 Schedule for R11: Barcelona-Sants → Girona on 20260320
+(after 17:00, before 21:00)
 
   Train   Departure   Arrival  Type    Delay
 ───────  ──────────  ────────  ────  ───────
-  15720       05:56     07:15    MD
-  15900       06:16     07:47     R
-  15722       06:46     08:05    MD
-  15904      *07:16     08:57     R     +47m
-  15802      *08:16     09:35    MD     +39m
-  15908      *09:16     10:47     R      +5m
-  15806       10:16     11:35    MD
-  15912       11:16     12:47     R
+  15816      *17:16     18:47     R     +11m
+  15818      *17:46     19:05    MD     +16m
+  15728      *18:16     19:35    MD     +34m
+  34684       18:46     20:07    MD
+  15820       19:16     20:47     R
+  15734       19:46     21:05    MD
+  34608       20:46     22:15    MD
+
+7 trips found.
 ```
 
 ```bash
 renfe schedule --from "Sants" --to "Sitges"            # auto-detect line
-renfe schedule --from "Sants" --to "Figueres" --after 18:00
+renfe schedule --line R11 --from "Sants" --to "Figueres"
 renfe schedule --from "Sants" --to "Girona" --after now --before +2h
 ```
 
-### Departures / Arrivals board
+### Departures
 
-All trains from/to a stop — like a station screen.
+All trains from a stop — like a station screen.
 
 ```
-$ renfe dep --stop Sants
+$ renfe dep --stop Sants --line R11 --after 17:00 --before 20:00
 
 Departures from Barcelona-Sants on 20260320
-(after 18:06)
+(after 17:00, before 20:00)
 
   Train  Line   Departure    Delay  Destination
 ───────  ────  ──────────  ───────  ──────────────────────────────
-  25444   R2N       17:01           Sant Celoni
-  25767    R1       17:04           Arenys De Mar
-  77746    R4       17:07           Martorell-Central
-  77247   R2S       17:14           Sant Vicenç De Calders
-  25657    R1       17:16           Calella
-  15816   R11       17:16           Portbou
+  15816   R11      *17:16     +11m  Portbou
+  15818   R11      *17:46     +16m  Portbou
+  15728   R11      *18:16     +34m  Figueres
+  34684   R11       18:46           Figueres
+  15820   R11       19:16           Portbou
+  15734   R11       19:46           Figueres
+
+6 departures.
 ```
 
-```bash
-renfe dep --stop "Sants" --line R11                    # filter by line
-renfe dep --stop "Sants" --after +1h --before +3h      # time window
-renfe arr --stop "Sants"                               # arrivals board
+### Arrivals
+
+All trains arriving at a stop.
+
+```
+$ renfe arr --stop Girona --line R11 --after 18:00 --before 22:00
+
+Arrivals at Girona on 20260320
+(after 18:00, before 22:00)
+
+  Train  Line     Arrival    Delay  Origin
+───────  ────  ──────────  ───────  ──────────────────────────────
+  15876   R11      *18:38      +9m  Portbou
+  15816   R11      *18:47     +11m  Barcelona-Sants
+  15818   R11      *19:05     +16m  Barcelona-Sants
+  15786   R11      *19:17      +2m  Figueres
+  15728   R11      *19:35     +34m  Barcelona-Sants
+  34684   R11       20:07           Barcelona-Sants
+  15882   R11       20:08           Portbou
+  15820   R11       20:47           Barcelona-Sants
+  15788   R11       20:57           Figueres
+  15734   R11       21:05           Barcelona-Sants
+  15886   R11       21:17           Portbou
+
+11 arrivals.
 ```
 
 ### Live positions
@@ -79,11 +104,12 @@ Active trains on line R11:
 
    Train  Status          Stop                                  Lat        Lon
 ────────  ──────────────  ──────────────────────────────  ─────────  ─────────
-   15726  IN_TRANSIT_TO   Girona                           41.97944    2.81673
-   15816  IN_TRANSIT_TO   Granollers-Centre                41.60764    2.29290
-   15818  STOPPED_AT      Barcelona-El Clot                41.41008    2.18879
-   15870  STOPPED_AT      Hostalric                        41.77167    2.67315
-   15918  STOPPED_AT      Figueres                         42.35360    3.13720
+   15728  STOPPED_AT      Barcelona-El Clot                41.40904    2.18739
+   15700  IN_TRANSIT_TO   Girona                           41.75203    2.65400
+   15786  IN_TRANSIT_TO   Flaçà                            42.14654    2.98188
+   15816  IN_TRANSIT_TO   Girona                           41.98044    2.81710
+   15818  IN_TRANSIT_TO   Maçanet-Massanes                 41.77885    2.67715
+   15870  STOPPED_AT      Barcelona-Sants                  41.39203    2.16466
 ```
 
 ### Other commands
@@ -94,14 +120,20 @@ renfe delays --line R11                     # current delays
 renfe stops --line R11                      # list stops on a line
 renfe routes                                # list all lines
 renfe routes --nucleus Barcelona            # filter by network
-renfe --no-rt dep --stop "Sants"            # skip RT (faster, no Delay column)
-renfe dep --stop "Sants" --after +1h        # departures in 1 hour
-renfe schedule --from Sants --to Girona --after now --before +2h
+renfe --no-rt schedule --from Sants --to Girona   # skip RT (faster, no Delay column)
 ```
 
-Time args accept: `HH:MM`, `now`, `+1h`, `+30m`, `+1h30m`.
+## Time arguments
+
+`--after` and `--before` accept: `HH:MM`, `now`, `+1h`, `-30m`, `+1h30m`
+
+All commands show the full day unless filtered.
+
+## Stop name matching
 
 Stop names are partial and accent-insensitive: "Gracia" matches "Gràcia", "Macanet" matches "Maçanet".
+
+If a query matches multiple distinct stops (e.g. "Caldes" matches both Caldes D'estrac and Caldes De Malavella), you'll be asked to be more specific.
 
 ## Data sources
 

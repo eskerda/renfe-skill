@@ -112,6 +112,8 @@ The detection logic lives in `renfe_skill/train_type.py` and is pluggable — sw
 
 Stop names are matched case-insensitively with accent normalization. Partial matches work: "Sants" matches "Barcelona-Sants", "Gracia" matches "Barcelona-Passeig De Gràcia", "Macanet" matches "Maçanet-Massanes".
 
+If a query matches multiple distinct stops with actual results (e.g. "Caldes" matches both Caldes D'estrac and Caldes De Malavella), the user is asked to be more specific.
+
 ## Supported networks
 
 Madrid, Barcelona, Rodalies Catalunya, Málaga, Sevilla, Valencia, Bilbao, Santander, Asturias, Cádiz, Murcia/Alicante, Castellón, Zaragoza.
@@ -121,7 +123,7 @@ Madrid, Barcelona, Rodalies Catalunya, Málaga, Sevilla, Valencia, Bilbao, Santa
 `--after` and `--before` accept:
 - `HH:MM` — absolute time (e.g. `18:00`)
 - `now` — current time
-- `+1h`, `+30m`, `+1h30m` — relative to now
+- `+1h`, `-30m`, `+1h30m` — relative to now
 
 All commands show the full day unless filtered with `--after` / `--before`.
 
