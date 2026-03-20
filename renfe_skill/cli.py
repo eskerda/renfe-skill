@@ -95,24 +95,12 @@ def cmd_schedule(args):
         eh, em = divmod(total_min, 60)
         return f"~{eh:02d}:{em:02d}"
 
-    # Check if any train has a delay — only show expected columns if so
-    has_delays = any(
-        delay_by_train.get(_train_label(r["trip_id"], train_numbers))
-        for r in results
-    )
-
     print(f"Schedule for {args.line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
     if after_time:
         print(f"(showing departures after {after_time})")
     print()
-
-    if has_delays:
-        print(f"{'Departure':>10}  {'Expected':>9}  {'Arrival':>8}  {'Expected':>9}  {'Type':>4}  Trip ID")
-        print(f"{'─' * 10}  {'─' * 9}  {'─' * 8}  {'─' * 9}  {'─' * 4}  {'─' * 20}")
-    else:
-        print(f"{'Departure':>10}  {'Arrival':>8}  {'Type':>4}  Trip ID")
-        print(f"{'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 20}")
-
+    print(f"{'Departure':>10}  {'Arrival':>8}  {'Type':>4}  {'Delay':>7}  Trip ID")
+    print(f"{'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 7}  {'─' * 20}")
     for r in results:
         tt = r.get('train_type', '?')
         label = _train_label(r["trip_id"], train_numbers)
@@ -120,16 +108,13 @@ def cmd_schedule(args):
         dep = r["departure_time"][:5]
         arr = r["arrival_time"][:5]
 
-        if has_delays:
-            if delay_s and delay_s != 0:
-                exp_dep = _format_time_with_delay(r["departure_time"], delay_s)
-                exp_arr = _format_time_with_delay(r["arrival_time"], delay_s)
-            else:
-                exp_dep = ""
-                exp_arr = ""
-            print(f"{dep:>10}  {exp_dep:>9}  {arr:>8}  {exp_arr:>9}  {tt:>4}  {r['trip_id']}")
+        if delay_s and delay_s != 0:
+            delay_min = delay_s / 60
+            sign = "+" if delay_s > 0 else ""
+            delay_str = f"{sign}{delay_min:.0f}m"
         else:
-            print(f"{dep:>10}  {arr:>8}  {tt:>4}  {r['trip_id']}")
+            delay_str = ""
+        print(f"{dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}  {r['trip_id']}")
 
     print(f"\n{len(results)} trips found.")
 
