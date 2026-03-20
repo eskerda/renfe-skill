@@ -15,6 +15,21 @@ import requests
 from .config import GTFS_STATIC_URL, NUCLEUS_NAMES
 
 
+class AmbiguousStopError(Exception):
+    """Raised when a stop name matches multiple distinct stops."""
+    def __init__(self, query: str, matches: list[str]):
+        self.query = query
+        self.matches = matches
+        super().__init__(f"Multiple stops match '{query}': {', '.join(matches)}")
+
+
+def _check_ambiguous(stop_rows: list, query: str) -> None:
+    """Raise AmbiguousStopError if multiple distinct stop names match."""
+    names = sorted({r["stop_name"] for r in stop_rows})
+    if len(names) > 1:
+        raise AmbiguousStopError(query, names)
+
+
 def _normalize(text: str) -> str:
     """Normalize text for accent-insensitive, case-insensitive matching."""
     text = unicodedata.normalize("NFD", text)
@@ -303,6 +318,9 @@ def search_schedule(
         conn.close()
         return []
 
+    _check_ambiguous(origin_stops, origin)
+    _check_ambiguous(dest_stops, destination)
+
     origin_ids = {r["stop_id"] for r in origin_stops}
     dest_ids = {r["stop_id"] for r in dest_stops}
     origin_names = {r["stop_id"]: r["stop_name"] for r in origin_stops}
@@ -462,6 +480,8 @@ def _search_stop_board(
     if not stop_rows:
         conn.close()
         return []
+
+    _check_ambiguous(stop_rows, stop)
 
     stop_ids = {r["stop_id"] for r in stop_rows}
     stop_name = stop_rows[0]["stop_name"]

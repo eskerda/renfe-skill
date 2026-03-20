@@ -4,7 +4,7 @@ import argparse
 import sys
 from datetime import datetime
 
-from .gtfs_static import download_gtfs, find_routes, find_trips, get_active_services, load_stops, search_schedule, search_departures, search_arrivals
+from .gtfs_static import download_gtfs, find_routes, find_trips, get_active_services, load_stops, search_schedule, search_departures, search_arrivals, AmbiguousStopError
 from .gtfs_rt import get_alerts, get_trip_updates, get_vehicle_positions
 
 
@@ -135,11 +135,7 @@ def cmd_schedule(args):
 
     multi_line = len(lines_in_results) > 1
     header_line = ", ".join(sorted(lines_in_results)) if multi_line else results[0].get("line", "")
-    origin_names = sorted({r["origin_stop"] for r in results})
-    dest_names = sorted({r["destination_stop"] for r in results})
-    origin_str = " / ".join(origin_names)
-    dest_str = " / ".join(dest_names)
-    print(f"Schedule for {header_line}: {origin_str} → {dest_str} on {date_str}")
+    print(f"Schedule for {header_line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
     time_filter = ""
     if after_time:
         time_filter += f"after {after_time}"
@@ -554,7 +550,14 @@ def main():
     p_routes.set_defaults(func=cmd_routes)
 
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except AmbiguousStopError as e:
+        print(f"Multiple stops match '{e.query}':\n")
+        for i, name in enumerate(e.matches, 1):
+            print(f"  {i}. {name}")
+        print(f"\nBe more specific, e.g. \"{e.matches[0]}\"")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
