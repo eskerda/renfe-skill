@@ -85,24 +85,31 @@ def cmd_schedule(args):
         label = _train_label(d["trip_id"], train_numbers)
         delay_by_train[label] = d["delay_seconds"]
 
+    def _format_time_with_delay(scheduled: str, delay_s: int | None) -> str:
+        """Format a time, showing expected time with original in parens if delayed."""
+        t = scheduled[:5]  # HH:MM
+        if delay_s is None or delay_s == 0:
+            return t
+        # Calculate expected time
+        h, m = int(t[:2]), int(t[3:5])
+        total_min = h * 60 + m + (delay_s // 60)
+        eh, em = divmod(total_min, 60)
+        expected = f"{eh:02d}:{em:02d}"
+        return f"{expected} ({t})"
+
     print(f"Schedule for {args.line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
     if after_time:
         print(f"(showing departures after {after_time})")
     print()
-    print(f"{'Departure':>10}  {'Arrival':>10}  {'Type':>4}  {'Delay':>7}  Trip ID")
-    print(f"{'─' * 10}  {'─' * 10}  {'─' * 4}  {'─' * 7}  {'─' * 20}")
+    print(f"{'Departure':>16}  {'Arrival':>16}  {'Type':>4}  Trip ID")
+    print(f"{'─' * 16}  {'─' * 16}  {'─' * 4}  {'─' * 20}")
     for r in results:
         tt = r.get('train_type', '?')
-        # Match train number from trip_id
         label = _train_label(r["trip_id"], train_numbers)
         delay_s = delay_by_train.get(label)
-        if delay_s is not None:
-            delay_min = delay_s / 60
-            sign = "+" if delay_s > 0 else ""
-            delay_str = f"{sign}{delay_min:.0f}m"
-        else:
-            delay_str = ""
-        print(f"{r['departure_time']:>10}  {r['arrival_time']:>10}  {tt:>4}  {delay_str:>7}  {r['trip_id']}")
+        dep = _format_time_with_delay(r["departure_time"], delay_s)
+        arr = _format_time_with_delay(r["arrival_time"], delay_s)
+        print(f"{dep:>16}  {arr:>16}  {tt:>4}  {r['trip_id']}")
 
     print(f"\n{len(results)} trips found.")
 
