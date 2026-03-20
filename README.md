@@ -46,7 +46,7 @@ renfe schedule --from "Sants" --to "Girona" --after now --before +2h
 
 ### Departures / Arrivals board
 
-All trains from/to a stop — like a station screen. Defaults to upcoming trains.
+All trains from/to a stop — like a station screen.
 
 ```
 $ renfe dep --stop Sants
@@ -99,7 +99,7 @@ renfe dep --stop "Sants" --after +1h        # departures in 1 hour
 renfe schedule --from Sants --to Girona --after now --before +2h
 ```
 
-Time args accept: `HH:MM`, `now`, `+1h`, `+30m`, `+1h30m`. Departures/arrivals default to now.
+Time args accept: `HH:MM`, `now`, `+1h`, `+30m`, `+1h30m`.
 
 Stop names are partial and accent-insensitive: "Gracia" matches "Gràcia", "Macanet" matches "Maçanet".
 

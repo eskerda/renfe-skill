@@ -54,25 +54,26 @@ def _match_rt_entities(entities: list[dict], lines: set[str], train_numbers: set
     return results
 
 
-def _parse_time_arg(value: str | None, default: str | None = None) -> str | None:
+def _parse_time_arg(value: str | None) -> str | None:
     """Parse a time argument: HH:MM, 'now', or relative like +1h, +30m, +1h30m.
 
     Returns HH:MM string or None.
     """
     if value is None:
-        return default
+        return None
     value = value.strip().lower()
     if value == "now":
         return datetime.now().strftime("%H:%M")
-    if value.startswith("+"):
+    if value.startswith("+") or value.startswith("-"):
         import re
-        match = re.match(r'\+(?:(\d+)h)?(?:(\d+)m)?$', value)
+        match = re.match(r'([+-])(?:(\d+)h)?(?:(\d+)m)?$', value)
         if not match:
-            raise ValueError(f"Invalid relative time: {value}. Use +1h, +30m, +1h30m")
-        hours = int(match.group(1) or 0)
-        minutes = int(match.group(2) or 0)
+            raise ValueError(f"Invalid relative time: {value}. Use +1h, -30m, +1h30m")
+        sign = 1 if match.group(1) == "+" else -1
+        hours = int(match.group(2) or 0)
+        minutes = int(match.group(3) or 0)
         from datetime import timedelta
-        t = datetime.now() + timedelta(hours=hours, minutes=minutes)
+        t = datetime.now() + sign * timedelta(hours=hours, minutes=minutes)
         return t.strftime("%H:%M")
     # Assume HH:MM
     return value
@@ -188,8 +189,7 @@ def cmd_departures(args):
     db_path = download_gtfs(force=args.refresh)
 
     date_str = args.date or datetime.now().strftime("%Y%m%d")
-    now_default = datetime.now().strftime("%H:%M")
-    after_time = _parse_time_arg(args.after, default=now_default)
+    after_time = _parse_time_arg(args.after)
     before_time = _parse_time_arg(args.before)
     line = args.line or None
 
@@ -256,8 +256,7 @@ def cmd_arrivals(args):
     db_path = download_gtfs(force=args.refresh)
 
     date_str = args.date or datetime.now().strftime("%Y%m%d")
-    now_default = datetime.now().strftime("%H:%M")
-    after_time = _parse_time_arg(args.after, default=now_default)
+    after_time = _parse_time_arg(args.after)
     before_time = _parse_time_arg(args.before)
     line = args.line or None
 
@@ -501,7 +500,7 @@ def main():
     p_sched.add_argument("--from", "-f", dest="origin", required=True, help="Origin stop (partial name)")
     p_sched.add_argument("--to", "-t", dest="destination", required=True, help="Destination stop (partial name)")
     p_sched.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
-    p_sched.add_argument("--after", "-a", help="Show departures after TIME (HH:MM, now, +1h, +30m)")
+    p_sched.add_argument("--after", "-a", help="Show departures after TIME (HH:MM, now, +1h, -30m)")
     p_sched.add_argument("--before", "-b", help="Show departures before TIME")
     p_sched.set_defaults(func=cmd_schedule)
 
@@ -510,7 +509,7 @@ def main():
     p_dep.add_argument("--stop", "-s", required=True, help="Stop name (partial match)")
     p_dep.add_argument("--line", "-l", help="Filter by line")
     p_dep.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
-    p_dep.add_argument("--after", "-a", help="Show departures after TIME (default: now)")
+    p_dep.add_argument("--after", "-a", help="Show departures after TIME (HH:MM, now, +1h, -30m)")
     p_dep.add_argument("--before", "-b", help="Show departures before TIME")
     p_dep.set_defaults(func=cmd_departures)
 
@@ -519,7 +518,7 @@ def main():
     p_arr.add_argument("--stop", "-s", required=True, help="Stop name (partial match)")
     p_arr.add_argument("--line", "-l", help="Filter by line")
     p_arr.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
-    p_arr.add_argument("--after", "-a", help="Show arrivals after TIME (default: now)")
+    p_arr.add_argument("--after", "-a", help="Show arrivals after TIME (HH:MM, now, +1h, -30m)")
     p_arr.add_argument("--before", "-b", help="Show arrivals before TIME")
     p_arr.set_defaults(func=cmd_arrivals)
 

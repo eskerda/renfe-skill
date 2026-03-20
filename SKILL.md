@@ -41,7 +41,7 @@ uv run --directory <skill_dir> renfe schedule --from "Sants" --to "Caldes" --dat
 
 ### Station departures board
 
-All trains departing from a stop, with destination — like a station screen. Defaults to upcoming trains (from now).
+All trains departing from a stop, with destination — like a station screen.
 
 ```bash
 uv run --directory <skill_dir> renfe departures --stop "Sants"
@@ -51,7 +51,7 @@ uv run --directory <skill_dir> renfe dep --stop "Sants" --after +1h --before +3h
 
 ### Station arrivals board
 
-All trains arriving at a stop, with origin. Defaults to upcoming arrivals (from now).
+All trains arriving at a stop, with origin.
 
 ```bash
 uv run --directory <skill_dir> renfe arrivals --stop "Sants"
@@ -123,7 +123,7 @@ Madrid, Barcelona, Rodalies Catalunya, Málaga, Sevilla, Valencia, Bilbao, Santa
 - `now` — current time
 - `+1h`, `+30m`, `+1h30m` — relative to now
 
-Departures and arrivals default `--after` to `now` (upcoming only). Schedule shows the full day unless filtered.
+All commands show the full day unless filtered with `--after` / `--before`.
 
 ## Tips
 
