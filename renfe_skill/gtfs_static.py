@@ -127,34 +127,105 @@ def find_stop_times(zip_path: Path, trip_ids: set[str]) -> dict[str, list[dict]]
     return by_trip
 
 
+def find_lines_for_stops(zip_path: Path, origin: str, destination: str, date_str: str) -> list[dict]:
+    """Find all lines that serve both origin and destination stops.
+
+    Returns list of route dicts with an added 'line' key (short name).
+    Scans stop_times for matching stop pairs — slower than line-scoped queries.
+    """
+    stops = load_stops(zip_path)
+    origin_norm = _normalize(origin)
+    dest_norm = _normalize(destination)
+
+    # Find matching stop_ids
+    origin_stop_ids = {sid for sid, s in stops.items() if origin_norm in _normalize(s["stop_name"])}
+    dest_stop_ids = {sid for sid, s in stops.items() if dest_norm in _normalize(s["stop_name"])}
+
+    if not origin_stop_ids or not dest_stop_ids:
+        return []
+
+    # Scan stop_times to find trips that visit both stops (origin before destination)
+    trip_origin = {}  # trip_id -> stop_sequence at origin
+    trip_dest = {}    # trip_id -> stop_sequence at destination
+    with zipfile.ZipFile(zip_path) as zf:
+        for row in _read_csv_stripped(zf, "stop_times.txt"):
+            tid = row["trip_id"]
+            seq = int(row["stop_sequence"])
+            if row["stop_id"] in origin_stop_ids:
+                if tid not in trip_origin or seq < trip_origin[tid]:
+                    trip_origin[tid] = seq
+            if row["stop_id"] in dest_stop_ids:
+                if tid not in trip_dest or seq > trip_dest[tid]:
+                    trip_dest[tid] = seq
+
+    # Trips where origin comes before destination
+    valid_trip_ids = {tid for tid in trip_origin if tid in trip_dest and trip_origin[tid] < trip_dest[tid]}
+
+    if not valid_trip_ids:
+        return []
+
+    # Find which routes these trips belong to, filtered by active services
+    services = get_active_services(zip_path, date_str)
+    route_ids = set()
+    with zipfile.ZipFile(zip_path) as zf:
+        for row in _read_csv_stripped(zf, "trips.txt"):
+            if row["trip_id"] in valid_trip_ids and row["service_id"] in services:
+                route_ids.add(row["route_id"])
+
+    # Get unique lines from those routes
+    all_routes = load_routes(zip_path)
+    seen_lines = set()
+    matching_routes = []
+    for r in all_routes:
+        if r["route_id"] in route_ids:
+            line = r["route_short_name"]
+            if line not in seen_lines:
+                seen_lines.add(line)
+                matching_routes.append(r)
+
+    return matching_routes
+
+
 def search_schedule(
     zip_path: Path,
-    line: str,
+    line: str | None,
     origin: str,
     destination: str,
     date_str: str | None = None,
     after_time: str | None = None,
 ) -> list[dict]:
-    """Search for trips on a line from origin to destination.
+    """Search for trips from origin to destination, optionally on a specific line.
 
     Args:
-        line: Line short name, e.g. "R11"
+        line: Line short name (e.g. "R11"), or None to search all lines.
         origin: Partial stop name match, e.g. "Girona"
         destination: Partial stop name match, e.g. "Sants"
         date_str: YYYYMMDD, defaults to today
         after_time: HH:MM, only show departures after this time
 
     Returns:
-        List of dicts with departure_time, arrival_time, origin_stop, dest_stop, trip_id
+        List of dicts with departure_time, arrival_time, origin_stop, dest_stop,
+        trip_id, line, intermediate_stops, train_type.
     """
     if date_str is None:
         date_str = datetime.now().strftime("%Y%m%d")
 
-    # Find matching routes
-    routes = find_routes(zip_path, line=line)
+    # Find matching routes — either for a specific line or auto-discover
+    if line:
+        routes = find_routes(zip_path, line=line)
+    else:
+        routes = find_lines_for_stops(zip_path, origin, destination, date_str)
+        if routes:
+            # Expand to all routes for the discovered lines
+            lines = {r["route_short_name"] for r in routes}
+            routes = [r for r in load_routes(zip_path) if r["route_short_name"] in lines]
+
     if not routes:
         return []
-    route_ids = {r["route_id"] for r in routes}
+
+    # Build route_id -> line name mapping
+    route_to_line = {r["route_id"]: r["route_short_name"] for r in routes}
+    route_ids = set(route_to_line.keys())
 
     # Active services for the date
     services = get_active_services(zip_path, date_str)
@@ -165,7 +236,10 @@ def search_schedule(
     trips = find_trips(zip_path, route_ids, services)
     if not trips:
         return []
-    trip_ids = {t["trip_id"] for t in trips}
+
+    # Build trip_id -> line mapping
+    trip_to_line = {t["trip_id"]: route_to_line[t["route_id"]] for t in trips}
+    trip_ids = set(trip_to_line.keys())
 
     # Load stop names for matching
     stops = load_stops(zip_path)
@@ -194,17 +268,16 @@ def search_schedule(
             arr = dest_st["arrival_time"]
 
             if after_time:
-                # Compare HH:MM
                 if dep[:5] < after_time:
                     continue
 
-            # Count intermediate stops between origin and destination
             origin_seq = int(origin_st["stop_sequence"])
             dest_seq = int(dest_st["stop_sequence"])
             intermediate_stops = dest_seq - origin_seq - 1
 
             results.append({
                 "trip_id": trip_id,
+                "line": trip_to_line.get(trip_id, "?"),
                 "departure_time": dep,
                 "arrival_time": arr,
                 "origin_stop": stops.get(origin_st["stop_id"], {}).get("stop_name", origin_st["stop_id"]),
@@ -214,12 +287,17 @@ def search_schedule(
                 "intermediate_stops": intermediate_stops,
             })
 
-    # Classify train types based on intermediate stop counts
+    # Classify train types — per line, since different lines have different stop patterns
     if results:
         from .train_type import classify
-        max_stops = max(r["intermediate_stops"] for r in results)
+        # Group by line for classification
+        by_line: dict[str, list[dict]] = {}
         for r in results:
-            r["train_type"] = classify(r["intermediate_stops"], max_stops).value
+            by_line.setdefault(r["line"], []).append(r)
+        for line_results in by_line.values():
+            max_stops = max(r["intermediate_stops"] for r in line_results)
+            for r in line_results:
+                r["train_type"] = classify(r["intermediate_stops"], max_stops).value
 
     results.sort(key=lambda r: r["departure_time"])
     return results

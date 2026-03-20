@@ -61,10 +61,11 @@ def cmd_schedule(args):
 
     date_str = args.date or datetime.now().strftime("%Y%m%d")
     after_time = args.after or None
+    line = args.line or None
 
     results = search_schedule(
         zip_path,
-        line=args.line,
+        line=line,
         origin=args.origin,
         destination=args.destination,
         date_str=date_str,
@@ -72,38 +73,41 @@ def cmd_schedule(args):
     )
 
     if not results:
-        print(f"No trips found for {args.line} from '{args.origin}' to '{args.destination}' on {date_str}")
+        line_str = f" on {line}" if line else ""
+        print(f"No trips found from '{args.origin}' to '{args.destination}'{line_str} on {date_str}")
         return
 
-    # Fetch live delays and match to schedule results
-    routes = find_routes(zip_path, line=args.line)
+    # Fetch live delays — for each line in results
     services = get_active_services(zip_path, date_str)
-    train_numbers = _get_train_numbers(zip_path, routes, services)
-    delays = _match_rt_entities(get_trip_updates(), args.line, train_numbers)
-    delay_by_train = {}
-    for d in delays:
-        label = _train_label(d["trip_id"], train_numbers)
-        delay_by_train[label] = d["delay_seconds"]
+    lines_in_results = {r["line"] for r in results}
+    delay_by_train: dict[str, int] = {}
+    all_train_numbers: set[str] = set()
+    for ln in lines_in_results:
+        routes = find_routes(zip_path, line=ln)
+        train_numbers = _get_train_numbers(zip_path, routes, services)
+        all_train_numbers.update(train_numbers)
+        delays = _match_rt_entities(get_trip_updates(), ln, train_numbers)
+        for d in delays:
+            lbl = _train_label(d["trip_id"], train_numbers)
+            delay_by_train[lbl] = d["delay_seconds"]
 
-    def _format_time_with_delay(scheduled: str, delay_s: int | None) -> str:
-        """Return expected time as HH:MM, adjusted by delay."""
-        t = scheduled[:5]  # HH:MM
-        if delay_s is None or delay_s == 0:
-            return t
-        h, m = int(t[:2]), int(t[3:5])
-        total_min = h * 60 + m + (delay_s // 60)
-        eh, em = divmod(total_min, 60)
-        return f"~{eh:02d}:{em:02d}"
-
-    print(f"Schedule for {args.line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
+    multi_line = len(lines_in_results) > 1
+    header_line = ", ".join(sorted(lines_in_results)) if multi_line else results[0].get("line", "")
+    print(f"Schedule for {header_line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
     if after_time:
         print(f"(showing departures after {after_time})")
     print()
-    print(f"{'Train':>7}  {'Departure':>10}  {'Arrival':>8}  {'Type':>4}  {'Delay':>7}")
-    print(f"{'─' * 7}  {'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 7}")
+
+    if multi_line:
+        print(f"{'Train':>7}  {'Line':>4}  {'Departure':>10}  {'Arrival':>8}  {'Type':>4}  {'Delay':>7}")
+        print(f"{'─' * 7}  {'─' * 4}  {'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 7}")
+    else:
+        print(f"{'Train':>7}  {'Departure':>10}  {'Arrival':>8}  {'Type':>4}  {'Delay':>7}")
+        print(f"{'─' * 7}  {'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 7}")
+
     for r in results:
         tt = r.get('train_type', '?')
-        label = _train_label(r["trip_id"], train_numbers)
+        label = _train_label(r["trip_id"], all_train_numbers)
         delay_s = delay_by_train.get(label)
         dep = r["departure_time"][:5]
         arr = r["arrival_time"][:5]
@@ -115,7 +119,11 @@ def cmd_schedule(args):
             dep = f"*{dep}"
         else:
             delay_str = ""
-        print(f"{label:>7}  {dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}")
+
+        if multi_line:
+            print(f"{label:>7}  {r['line']:>4}  {dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}")
+        else:
+            print(f"{label:>7}  {dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}")
 
     print(f"\n{len(results)} trips found.")
 
@@ -297,7 +305,7 @@ def main():
 
     # schedule
     p_sched = sub.add_parser("schedule", aliases=["s"], help="Search departures")
-    p_sched.add_argument("--line", "-l", required=True, help="Line name (e.g. R11, C1)")
+    p_sched.add_argument("--line", "-l", help="Line name (e.g. R11, C1). Omit to search all lines.")
     p_sched.add_argument("--from", "-f", dest="origin", required=True, help="Origin stop (partial name)")
     p_sched.add_argument("--to", "-t", dest="destination", required=True, help="Destination stop (partial name)")
     p_sched.add_argument("--date", "-d", help="Date YYYYMMDD (default: today)")
