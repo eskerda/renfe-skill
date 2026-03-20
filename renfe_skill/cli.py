@@ -99,8 +99,8 @@ def cmd_schedule(args):
     if after_time:
         print(f"(showing departures after {after_time})")
     print()
-    print(f"{'Departure':>10}  {'Arrival':>8}  {'Type':>4}  {'Delay':>7}  Trip ID")
-    print(f"{'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 7}  {'─' * 20}")
+    print(f"{'Train':>7}  {'Departure':>10}  {'Arrival':>8}  {'Type':>4}  {'Delay':>7}")
+    print(f"{'─' * 7}  {'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 7}")
     for r in results:
         tt = r.get('train_type', '?')
         label = _train_label(r["trip_id"], train_numbers)
@@ -114,7 +114,7 @@ def cmd_schedule(args):
             delay_str = f"{sign}{delay_min:.0f}m"
         else:
             delay_str = ""
-        print(f"{dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}  {r['trip_id']}")
+        print(f"{label:>7}  {dep:>10}  {arr:>8}  {tt:>4}  {delay_str:>7}")
 
     print(f"\n{len(results)} trips found.")
 
