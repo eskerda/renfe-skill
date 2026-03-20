@@ -8,18 +8,27 @@ from .gtfs_static import download_gtfs, find_routes, find_trips, get_active_serv
 from .gtfs_rt import get_alerts, get_trip_updates, get_vehicle_positions
 
 
-def _get_train_numbers(zip_path, routes, services) -> set[str]:
-    """Extract train numbers for a line from GTFS static trips.
+def _get_train_numbers_for_lines(db_path, lines: set[str], services: set[str]) -> set[str]:
+    """Extract train numbers for multiple lines from GTFS static trips in one query.
 
     Maps trip_ids like '5173X15778R11' to train numbers like '15778'.
     """
-    route_ids = {r["route_id"] for r in routes}
-    trips = find_trips(zip_path, route_ids, services)
+    all_routes = []
+    for ln in lines:
+        all_routes.extend(find_routes(db_path, line=ln))
+    if not all_routes:
+        return set()
+
+    route_ids = {r["route_id"] for r in all_routes}
+    trips = find_trips(db_path, route_ids, services)
+
+    # Build short_name set for splitting
+    short_names = {r["route_short_name"] for r in all_routes}
+
     train_numbers = set()
     for t in trips:
         tid = t["trip_id"]
-        for r in routes:
-            short = r["route_short_name"]
+        for short in short_names:
             if short in tid:
                 num = tid.split(short)[0]
                 for s in services:
@@ -31,13 +40,14 @@ def _get_train_numbers(zip_path, routes, services) -> set[str]:
     return train_numbers
 
 
-def _match_rt_entities(entities: list[dict], line: str, train_numbers: set[str]) -> list[dict]:
-    """Filter RT entities by line name in trip_id (cercanías) or train number prefix (LD)."""
-    line_upper = line.upper()
+def _match_rt_entities(entities: list[dict], lines: set[str], train_numbers: set[str]) -> list[dict]:
+    """Filter RT entities by line names in trip_id (cercanías) or train number prefix (LD)."""
+    lines_upper = {ln.upper() for ln in lines}
     results = []
     for e in entities:
         tid = e["trip_id"]
-        if line_upper in tid.upper():
+        tid_upper = tid.upper()
+        if any(ln in tid_upper for ln in lines_upper):
             results.append(e)
         elif any(tid.startswith(num) for num in train_numbers):
             results.append(e)
@@ -77,19 +87,15 @@ def cmd_schedule(args):
         print(f"No trips found from '{args.origin}' to '{args.destination}'{line_str} on {date_str}")
         return
 
-    # Fetch live delays — for each line in results
+    # Fetch live delays
     services = get_active_services(zip_path, date_str)
     lines_in_results = {r["line"] for r in results}
+    all_train_numbers = _get_train_numbers_for_lines(zip_path, lines_in_results, services)
+    delays = _match_rt_entities(get_trip_updates(), lines_in_results, all_train_numbers)
     delay_by_train: dict[str, int] = {}
-    all_train_numbers: set[str] = set()
-    for ln in lines_in_results:
-        routes = find_routes(zip_path, line=ln)
-        train_numbers = _get_train_numbers(zip_path, routes, services)
-        all_train_numbers.update(train_numbers)
-        delays = _match_rt_entities(get_trip_updates(), ln, train_numbers)
-        for d in delays:
-            lbl = _train_label(d["trip_id"], train_numbers)
-            delay_by_train[lbl] = d["delay_seconds"]
+    for d in delays:
+        lbl = _train_label(d["trip_id"], all_train_numbers)
+        delay_by_train[lbl] = d["delay_seconds"]
 
     multi_line = len(lines_in_results) > 1
     header_line = ", ".join(sorted(lines_in_results)) if multi_line else results[0].get("line", "")
@@ -148,19 +154,15 @@ def cmd_departures(args):
         print(f"No departures found from '{args.stop}' on {date_str}")
         return
 
-    # Fetch live delays for all lines in results
+    # Fetch live delays
     services = get_active_services(db_path, date_str)
     lines_in_results = {r["line"] for r in results}
+    all_train_numbers = _get_train_numbers_for_lines(db_path, lines_in_results, services)
+    delays = _match_rt_entities(get_trip_updates(), lines_in_results, all_train_numbers)
     delay_by_train: dict[str, int] = {}
-    all_train_numbers: set[str] = set()
-    for ln in lines_in_results:
-        routes = find_routes(db_path, line=ln)
-        train_numbers = _get_train_numbers(db_path, routes, services)
-        all_train_numbers.update(train_numbers)
-        delays = _match_rt_entities(get_trip_updates(), ln, train_numbers)
-        for d in delays:
-            lbl = _train_label(d["trip_id"], train_numbers)
-            delay_by_train[lbl] = d["delay_seconds"]
+    for d in delays:
+        lbl = _train_label(d["trip_id"], all_train_numbers)
+        delay_by_train[lbl] = d["delay_seconds"]
 
     stop_name = results[0]["stop_name"]
     print(f"Departures from {stop_name} on {date_str}")
@@ -211,16 +213,12 @@ def cmd_arrivals(args):
     # Fetch live delays
     services = get_active_services(db_path, date_str)
     lines_in_results = {r["line"] for r in results}
+    all_train_numbers = _get_train_numbers_for_lines(db_path, lines_in_results, services)
+    delays = _match_rt_entities(get_trip_updates(), lines_in_results, all_train_numbers)
     delay_by_train: dict[str, int] = {}
-    all_train_numbers: set[str] = set()
-    for ln in lines_in_results:
-        routes = find_routes(db_path, line=ln)
-        train_numbers = _get_train_numbers(db_path, routes, services)
-        all_train_numbers.update(train_numbers)
-        delays = _match_rt_entities(get_trip_updates(), ln, train_numbers)
-        for d in delays:
-            lbl = _train_label(d["trip_id"], train_numbers)
-            delay_by_train[lbl] = d["delay_seconds"]
+    for d in delays:
+        lbl = _train_label(d["trip_id"], all_train_numbers)
+        delay_by_train[lbl] = d["delay_seconds"]
 
     stop_name = results[0]["stop_name"]
     print(f"Arrivals at {stop_name} on {date_str}")
@@ -292,9 +290,9 @@ def cmd_delays(args):
 
     today = datetime.now().strftime("%Y%m%d")
     services = get_active_services(zip_path, today)
-    train_numbers = _get_train_numbers(zip_path, routes, services)
+    train_numbers = _get_train_numbers_for_lines(zip_path, {args.line}, services)
 
-    relevant = _match_rt_entities(get_trip_updates(), args.line, train_numbers)
+    relevant = _match_rt_entities(get_trip_updates(), {args.line}, train_numbers)
     stops = load_stops(zip_path)
 
     if not relevant:
@@ -328,9 +326,9 @@ def cmd_positions(args):
 
     today = datetime.now().strftime("%Y%m%d")
     services = get_active_services(zip_path, today)
-    train_numbers = _get_train_numbers(zip_path, routes, services)
+    train_numbers = _get_train_numbers_for_lines(zip_path, {args.line}, services)
 
-    relevant = _match_rt_entities(get_vehicle_positions(), args.line, train_numbers)
+    relevant = _match_rt_entities(get_vehicle_positions(), {args.line}, train_numbers)
     stops = load_stops(zip_path)
 
     if not relevant:
