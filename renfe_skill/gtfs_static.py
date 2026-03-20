@@ -4,6 +4,7 @@ import csv
 import io
 import os
 import time
+import unicodedata
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,13 @@ from pathlib import Path
 import requests
 
 from .config import GTFS_STATIC_URL, NUCLEUS_NAMES
+
+
+def _normalize(text: str) -> str:
+    """Normalize text for accent-insensitive, case-insensitive matching."""
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    return text.upper()
 
 CACHE_DIR = Path(os.environ.get("RENFE_CACHE_DIR", Path.home() / ".cache" / "renfe-skill"))
 CACHE_MAX_AGE = 3600 * 24 * 7  # 1 week
@@ -165,8 +173,8 @@ def search_schedule(
     # Load stop_times
     all_stop_times = find_stop_times(zip_path, trip_ids)
 
-    origin_upper = origin.upper()
-    dest_upper = destination.upper()
+    origin_norm = _normalize(origin)
+    dest_norm = _normalize(destination)
 
     results = []
     for trip_id, stop_times in all_stop_times.items():
@@ -174,10 +182,10 @@ def search_schedule(
         origin_st = None
         dest_st = None
         for st in stop_times:
-            name = stops.get(st["stop_id"], {}).get("stop_name", "").upper()
-            if origin_upper in name and origin_st is None:
+            name = _normalize(stops.get(st["stop_id"], {}).get("stop_name", ""))
+            if origin_norm in name and origin_st is None:
                 origin_st = st
-            if dest_upper in name and origin_st is not None:
+            if dest_norm in name and origin_st is not None:
                 dest_st = st
                 break
 
