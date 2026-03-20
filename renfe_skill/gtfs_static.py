@@ -130,35 +130,38 @@ def find_stop_times(zip_path: Path, trip_ids: set[str]) -> dict[str, list[dict]]
 def find_lines_for_stops(zip_path: Path, origin: str, destination: str, date_str: str) -> list[dict]:
     """Find all lines that serve both origin and destination stops.
 
-    Returns list of route dicts with an added 'line' key (short name).
-    Scans stop_times for matching stop pairs — slower than line-scoped queries.
+    Returns list of route dicts. Scans stop_times with a fast raw parse.
     """
     stops = load_stops(zip_path)
     origin_norm = _normalize(origin)
     dest_norm = _normalize(destination)
 
-    # Find matching stop_ids
     origin_stop_ids = {sid for sid, s in stops.items() if origin_norm in _normalize(s["stop_name"])}
     dest_stop_ids = {sid for sid, s in stops.items() if dest_norm in _normalize(s["stop_name"])}
 
     if not origin_stop_ids or not dest_stop_ids:
         return []
 
-    # Scan stop_times to find trips that visit both stops (origin before destination)
-    trip_origin = {}  # trip_id -> stop_sequence at origin
-    trip_dest = {}    # trip_id -> stop_sequence at destination
+    # Fast raw scan of stop_times — avoid full dict construction per row
+    # Columns: trip_id,arrival_time,departure_time,stop_id,stop_sequence
+    trip_origin: dict[str, int] = {}
+    trip_dest: dict[str, int] = {}
     with zipfile.ZipFile(zip_path) as zf:
-        for row in _read_csv_stripped(zf, "stop_times.txt"):
-            tid = row["trip_id"]
-            seq = int(row["stop_sequence"])
-            if row["stop_id"] in origin_stop_ids:
-                if tid not in trip_origin or seq < trip_origin[tid]:
-                    trip_origin[tid] = seq
-            if row["stop_id"] in dest_stop_ids:
-                if tid not in trip_dest or seq > trip_dest[tid]:
-                    trip_dest[tid] = seq
+        with zf.open("stop_times.txt") as f:
+            f.readline()  # skip header
+            for raw_line in f:
+                parts = raw_line.decode("utf-8-sig").split(",")
+                tid = parts[0].strip()
+                sid = parts[3].strip()
+                if sid in origin_stop_ids or sid in dest_stop_ids:
+                    seq = int(parts[4].strip())
+                    if sid in origin_stop_ids:
+                        if tid not in trip_origin or seq < trip_origin[tid]:
+                            trip_origin[tid] = seq
+                    if sid in dest_stop_ids:
+                        if tid not in trip_dest or seq > trip_dest[tid]:
+                            trip_dest[tid] = seq
 
-    # Trips where origin comes before destination
     valid_trip_ids = {tid for tid in trip_origin if tid in trip_dest and trip_origin[tid] < trip_dest[tid]}
 
     if not valid_trip_ids:
@@ -168,11 +171,16 @@ def find_lines_for_stops(zip_path: Path, origin: str, destination: str, date_str
     services = get_active_services(zip_path, date_str)
     route_ids = set()
     with zipfile.ZipFile(zip_path) as zf:
-        for row in _read_csv_stripped(zf, "trips.txt"):
-            if row["trip_id"] in valid_trip_ids and row["service_id"] in services:
-                route_ids.add(row["route_id"])
+        with zf.open("trips.txt") as f:
+            f.readline()  # skip header
+            for raw_line in f:
+                parts = raw_line.decode("utf-8-sig").split(",")
+                tid = parts[2].strip()  # trip_id
+                sid = parts[1].strip()  # service_id
+                rid = parts[0].strip()  # route_id
+                if tid in valid_trip_ids and sid in services:
+                    route_ids.add(rid)
 
-    # Get unique lines from those routes
     all_routes = load_routes(zip_path)
     seen_lines = set()
     matching_routes = []
