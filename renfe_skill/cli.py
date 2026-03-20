@@ -135,7 +135,11 @@ def cmd_schedule(args):
 
     multi_line = len(lines_in_results) > 1
     header_line = ", ".join(sorted(lines_in_results)) if multi_line else results[0].get("line", "")
-    print(f"Schedule for {header_line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
+    origin_names = sorted({r["origin_stop"] for r in results})
+    dest_names = sorted({r["destination_stop"] for r in results})
+    origin_str = " / ".join(origin_names)
+    dest_str = " / ".join(dest_names)
+    print(f"Schedule for {header_line}: {origin_str} → {dest_str} on {date_str}")
     time_filter = ""
     if after_time:
         time_filter += f"after {after_time}"
