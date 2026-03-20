@@ -86,30 +86,50 @@ def cmd_schedule(args):
         delay_by_train[label] = d["delay_seconds"]
 
     def _format_time_with_delay(scheduled: str, delay_s: int | None) -> str:
-        """Format a time, showing expected time with original in parens if delayed."""
+        """Return expected time as HH:MM, adjusted by delay."""
         t = scheduled[:5]  # HH:MM
         if delay_s is None or delay_s == 0:
             return t
-        # Calculate expected time
         h, m = int(t[:2]), int(t[3:5])
         total_min = h * 60 + m + (delay_s // 60)
         eh, em = divmod(total_min, 60)
-        expected = f"{eh:02d}:{em:02d}"
-        return f"{expected} ({t})"
+        return f"~{eh:02d}:{em:02d}"
+
+    # Check if any train has a delay — only show expected columns if so
+    has_delays = any(
+        delay_by_train.get(_train_label(r["trip_id"], train_numbers))
+        for r in results
+    )
 
     print(f"Schedule for {args.line}: {results[0]['origin_stop']} → {results[0]['destination_stop']} on {date_str}")
     if after_time:
         print(f"(showing departures after {after_time})")
     print()
-    print(f"{'Departure':>16}  {'Arrival':>16}  {'Type':>4}  Trip ID")
-    print(f"{'─' * 16}  {'─' * 16}  {'─' * 4}  {'─' * 20}")
+
+    if has_delays:
+        print(f"{'Departure':>10}  {'Expected':>9}  {'Arrival':>8}  {'Expected':>9}  {'Type':>4}  Trip ID")
+        print(f"{'─' * 10}  {'─' * 9}  {'─' * 8}  {'─' * 9}  {'─' * 4}  {'─' * 20}")
+    else:
+        print(f"{'Departure':>10}  {'Arrival':>8}  {'Type':>4}  Trip ID")
+        print(f"{'─' * 10}  {'─' * 8}  {'─' * 4}  {'─' * 20}")
+
     for r in results:
         tt = r.get('train_type', '?')
         label = _train_label(r["trip_id"], train_numbers)
         delay_s = delay_by_train.get(label)
-        dep = _format_time_with_delay(r["departure_time"], delay_s)
-        arr = _format_time_with_delay(r["arrival_time"], delay_s)
-        print(f"{dep:>16}  {arr:>16}  {tt:>4}  {r['trip_id']}")
+        dep = r["departure_time"][:5]
+        arr = r["arrival_time"][:5]
+
+        if has_delays:
+            if delay_s and delay_s != 0:
+                exp_dep = _format_time_with_delay(r["departure_time"], delay_s)
+                exp_arr = _format_time_with_delay(r["arrival_time"], delay_s)
+            else:
+                exp_dep = ""
+                exp_arr = ""
+            print(f"{dep:>10}  {exp_dep:>9}  {arr:>8}  {exp_arr:>9}  {tt:>4}  {r['trip_id']}")
+        else:
+            print(f"{dep:>10}  {arr:>8}  {tt:>4}  {r['trip_id']}")
 
     print(f"\n{len(results)} trips found.")
 
